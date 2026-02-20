@@ -2,7 +2,7 @@
 
 Usage: python test_agent.py <agent> "<prompt>"
 
-Agents: jira, browser, vision, synthesis, slack
+Agents: jira, browser, vision, synthesis, slack, figma
 """
 import asyncio
 import json
@@ -16,7 +16,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 
-AGENTS = ["jira", "browser", "vision", "synthesis", "slack"]
+AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma"]
 
 
 async def main():
@@ -73,6 +73,11 @@ async def main():
         from agents.slack_agent import run_slack_agent
 
         result = await run_slack_agent(prompt)
+
+    elif agent == "figma":
+        from agents.figma_agent import run_figma_agent
+
+        result = await run_figma_agent(prompt)
 
     else:
         print(f"Unknown agent: {agent}. Choose from: {', '.join(AGENTS)}")
