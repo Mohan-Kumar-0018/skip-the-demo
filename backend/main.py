@@ -22,6 +22,8 @@ from db.models import (
     get_results,
     get_run,
     get_steps,
+    get_token_usage,
+    get_token_usage_summary,
 )
 from orchestrator import run_browser_pipeline, run_pipeline
 
@@ -121,4 +123,21 @@ def agent_data(job_id: str):
         "jira": dict(jira) if jira else None,
         "figma": dict(figma) if figma else None,
         "browser": dict(browser) if browser else None,
+    }
+
+
+@app.get("/token-usage/{job_id}")
+def token_usage(job_id: str):
+    run = get_run(job_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    rows = get_token_usage(job_id)
+    summary = get_token_usage_summary(job_id)
+    return {
+        "agents": [dict(r) for r in rows],
+        "totals": dict(summary) if summary else {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost_usd": 0,
+        },
     }

@@ -77,8 +77,8 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return {"error": f"Unknown tool: {name}"}
 
 
-async def run_slack_agent(task: str) -> str:
-    """Run the Slack agent with the given task description."""
+async def run_slack_agent(task: str) -> dict:
+    """Run the Slack agent with the given task description. Returns {text, usage}."""
     return await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,

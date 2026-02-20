@@ -310,3 +310,58 @@ def get_browser_data(run_id: str) -> dict[str, Any] | None:
                 (run_id,),
             )
             return cur.fetchone()
+
+
+# ── TOKEN USAGE ─────────────────────────
+
+
+def save_token_usage(
+    run_id: str,
+    agent_name: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_token_usage
+                  (run_id, agent_name, model, input_tokens, output_tokens, cost_usd)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (run_id, agent_name, model, input_tokens, output_tokens, cost_usd),
+            )
+
+
+def get_token_usage(run_id: str) -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT agent_name, model, input_tokens, output_tokens, cost_usd, created_at
+                FROM run_token_usage
+                WHERE run_id=%s
+                ORDER BY created_at
+                """,
+                (run_id,),
+            )
+            return cur.fetchall()
+
+
+def get_token_usage_summary(run_id: str) -> dict[str, Any]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
+                    COALESCE(SUM(cost_usd), 0) AS total_cost_usd
+                FROM run_token_usage
+                WHERE run_id=%s
+                """,
+                (run_id,),
+            )
+            return cur.fetchone()

@@ -20,6 +20,7 @@ from db.models import (
     save_figma_data,
     save_jira_data,
     save_results,
+    save_token_usage,
     update_run,
     upsert_step,
 )
@@ -222,6 +223,11 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             jira_data = result["data"]
             ticket = jira_data.get("ticket", {})
 
+            # Save token usage
+            usage = result.get("usage", {})
+            if usage:
+                save_token_usage(run_id, "jira", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
             # Extract PRD text from PDF attachments
             prd_text = ""
             for att in jira_data.get("attachments", []):
@@ -263,6 +269,11 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             file_info = figma_data.get("file_info", {})
             node_info = figma_data.get("node_info", {})
 
+            # Save token usage
+            usage = result.get("usage", {})
+            if usage:
+                save_token_usage(run_id, "figma", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
             save_figma_data(run_id, {
                 "figma_url": input["task"],
                 "file_key": parsed.get("file_key", ""),
@@ -283,6 +294,11 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             logger.info("Orchestrator calling: call_browser_agent")
             result = await run_browser_agent(input["task"])
             browser_data = result["data"]
+
+            # Save token usage
+            usage = result.get("usage", {})
+            if usage:
+                save_token_usage(run_id, "browser", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
 
             save_browser_data(run_id, {
                 "urls_visited": browser_data.get("urls_visited", []),
@@ -310,7 +326,13 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             logger.info("Orchestrator calling: call_slack_agent")
             result = await run_slack_agent(input["task"])
             collected["slack_sent"] = True
-            return result
+
+            # Save token usage
+            usage = result.get("usage", {})
+            if usage:
+                save_token_usage(run_id, "slack", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
+            return result["text"]
 
         elif name == "analyze_design":
             logger.info("Orchestrator calling: analyze_design")
@@ -321,6 +343,12 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             result = compare_design_vs_reality(design_bytes, screenshot_paths)
             collected["design_score"] = result["score"]
             collected["deviations"] = result["deviations"]
+
+            # Save token usage
+            usage = result.pop("usage", {})
+            if usage:
+                save_token_usage(run_id, "vision", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
             return result
 
         elif name == "generate_content":
@@ -340,6 +368,12 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
             collected["feature_name"] = input["feature_name"]
             collected["summary"] = result["summary"]
             collected["release_notes"] = result["release_notes"]
+
+            # Save token usage
+            usage = result.pop("usage", {})
+            if usage:
+                save_token_usage(run_id, "synthesis", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
             return result
 
         elif name == "update_progress":
@@ -406,12 +440,17 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
 
         result = await run_browser_agent(task)
 
+        # Save browser agent token usage
+        usage = result.get("usage", {})
+        if usage:
+            save_token_usage(run_id, "browser", usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cost_usd", 0))
+
         # 4. Collect outputs
         collected = {
             "feature_name": kb_key,
             "design_score": 0,
             "deviations": [],
-            "summary": result,
+            "summary": result["summary"],
             "release_notes": "",
             "video_path": None,
             "screenshots": [],
@@ -457,13 +496,19 @@ async def run_pipeline(run_id: str, ticket_id: str) -> None:
             "generate content, and deliver to Slack."
         )
 
-        await run_agent_loop(
+        orch_result = await run_agent_loop(
             system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
             tools=ORCHESTRATOR_TOOLS,
             tool_executor=executor,
             user_message=user_message,
             max_turns=25,
+            model="claude-haiku-4-5-20251001",
         )
+
+        # Save orchestrator's own token usage
+        orch_usage = orch_result.get("usage", {})
+        if orch_usage:
+            save_token_usage(run_id, "orchestrator", orch_usage.get("model", ""), orch_usage.get("input_tokens", 0), orch_usage.get("output_tokens", 0), orch_usage.get("cost_usd", 0))
 
         # Save collected results and mark complete
         save_results(run_id, collected)

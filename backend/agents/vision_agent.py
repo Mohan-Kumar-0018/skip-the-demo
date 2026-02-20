@@ -7,7 +7,9 @@ from typing import Any
 
 import anthropic
 
-client = anthropic.Anthropic()
+from agent_runner import calc_cost
+
+client = anthropic.Anthropic(max_retries=5)
 
 
 def _b64(path: str) -> str:
@@ -25,8 +27,9 @@ def compare_design_vs_reality(
     design_b64 = _b64_bytes(design_bytes)
     actual_b64 = _b64(screenshots[0])
 
+    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
     response = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+        model=model,
         max_tokens=1500,
         messages=[
             {
@@ -73,4 +76,11 @@ def compare_design_vs_reality(
 
     text = response.content[0].text
     clean = text.replace("```json", "").replace("```", "").strip()
-    return json.loads(clean)
+    parsed = json.loads(clean)
+    parsed["usage"] = {
+        "model": model,
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cost_usd": calc_cost(model, response.usage.input_tokens, response.usage.output_tokens),
+    }
+    return parsed

@@ -158,10 +158,10 @@ async def run_figma_agent(task: str) -> dict[str, Any]:
                 })
         return result
 
-    summary = await run_agent_loop(
+    result = await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
         tool_executor=_collecting_executor,
         user_message=task,
     )
-    return {"summary": summary, "data": collected}
+    return {"summary": result["text"], "data": collected, "usage": result["usage"]}

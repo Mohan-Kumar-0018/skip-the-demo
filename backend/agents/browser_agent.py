@@ -320,11 +320,11 @@ async def run_browser_agent(task: str) -> dict[str, Any]:
             collected["video_path"] = result.get("video_path")
         return result
 
-    summary = await run_agent_loop(
+    result = await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
         tool_executor=_collecting_executor,
         user_message=task,
         max_turns=30,
     )
-    return {"summary": summary, "data": collected}
+    return {"summary": result["text"], "data": collected, "usage": result["usage"]}

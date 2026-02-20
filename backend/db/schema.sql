@@ -75,3 +75,14 @@ CREATE TABLE IF NOT EXISTS run_browser_data (
     interactive_elements    JSONB,
     created_at              TIMESTAMP       DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS run_token_usage (
+    id              SERIAL          PRIMARY KEY,
+    run_id          VARCHAR(8)      REFERENCES runs(id),
+    agent_name      VARCHAR(50)     NOT NULL,
+    model           VARCHAR(100),
+    input_tokens    INTEGER         DEFAULT 0,
+    output_tokens   INTEGER         DEFAULT 0,
+    cost_usd        NUMERIC(10,6)   DEFAULT 0,
+    created_at      TIMESTAMP       DEFAULT NOW()
+);

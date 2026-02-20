@@ -5,7 +5,11 @@
       "Bash(source:*)",
       "Bash(pip install:*)",
       "Bash(python:*)",
-      "Bash(playwright install:*)"
+      "Bash(playwright install:*)",
+      "Bash(git push:*)",
+      "Bash(psql:*)",
+      "Bash(make test-jira:*)",
+      "Bash(git add:*)"
     ]
   }
 }
