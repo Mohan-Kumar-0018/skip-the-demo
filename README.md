@@ -83,8 +83,11 @@ cp .env.example .env
 ### 3. Set up database
 
 ```bash
-docker run --name skipdemo-db -e POSTGRES_PASSWORD=skipdemo -e POSTGRES_DB=skipdemo -p 5432:5432 -d postgres
-psql postgresql://postgres:skipdemo@localhost:5432/skipdemo -f backend/db/schema.sql
+# Start PostgreSQL (if using Docker)
+docker run --name skipdemo-db -e POSTGRES_DB=skipdemo -p 5432:5432 -d postgres
+
+# Create tables (reads DATABASE_URL from backend/.env)
+make db-reset
 ```
 
 ### 4. Run

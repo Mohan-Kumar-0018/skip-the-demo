@@ -25,9 +25,8 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
-# Database
-docker run --name skipdemo-db -e POSTGRES_PASSWORD=skipdemo -e POSTGRES_DB=skipdemo -p 5432:5432 -d postgres
-psql postgresql://postgres:skipdemo@localhost:5432/skipdemo -f db/schema.sql
+# Database (uses DATABASE_URL from backend/.env)
+make db-reset
 
 # Run backend
 uvicorn main:app --reload --port 8000
