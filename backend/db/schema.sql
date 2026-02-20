@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS run_steps (
     run_id          VARCHAR(8)   REFERENCES runs(id),
     step_name       VARCHAR(100),
     step_status     VARCHAR(50),
+    error           TEXT,
     updated_at      TIMESTAMP    DEFAULT NOW(),
     UNIQUE(run_id, step_name)
 );

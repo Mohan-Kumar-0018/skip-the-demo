@@ -90,7 +90,18 @@ async def create_plan(run_id: str, ticket_id: str) -> list[dict[str, Any]]:
     save_token_usage(run_id, "planner", MODEL, input_tokens, output_tokens, cost)
 
     # Parse the plan from response
-    text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    text = "".join(block.text for block in response.content if hasattr(block, "text")).strip()
+    logger.info("Planner raw response for run %s: %s", run_id, text[:500] if text else "<empty>")
+
+    if not text:
+        raise ValueError(f"Planner returned empty response. stop_reason={response.stop_reason}")
+
+    # Strip markdown fences if Claude wraps the JSON
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
     steps = json.loads(text)
 
     # Save plan to DB
@@ -160,7 +171,18 @@ async def replan(run_id: str, ticket_id: str) -> dict[str, Any]:
     cost = calc_cost(MODEL, input_tokens, output_tokens)
     save_token_usage(run_id, "replanner", MODEL, input_tokens, output_tokens, cost)
 
-    text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    text = "".join(block.text for block in response.content if hasattr(block, "text")).strip()
+    logger.info("Replanner raw response for run %s: %s", run_id, text[:500] if text else "<empty>")
+
+    if not text:
+        raise ValueError(f"Replanner returned empty response. stop_reason={response.stop_reason}")
+
+    # Strip markdown fences if Claude wraps the JSON
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
     decision = json.loads(text)
     logger.info("Replan for run %s: %s", run_id, decision)
 

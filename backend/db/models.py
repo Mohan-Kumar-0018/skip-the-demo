@@ -87,32 +87,33 @@ def get_all_runs() -> list[dict[str, Any]]:
 # ── STEPS ─────────────────────────────────
 
 
-def upsert_step(run_id: str, step_name: str, step_status: str) -> None:
+def upsert_step(
+    run_id: str, step_name: str, step_status: str, error: str | None = None
+) -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO run_steps (run_id, step_name, step_status, updated_at)
-                VALUES (%s, %s, %s, NOW())
+                INSERT INTO run_steps (run_id, step_name, step_status, error, updated_at)
+                VALUES (%s, %s, %s, %s, NOW())
                 ON CONFLICT (run_id, step_name)
-                DO UPDATE SET step_status=%s, updated_at=NOW()
+                DO UPDATE SET step_status=%s, error=%s, updated_at=NOW()
                 """,
-                (run_id, step_name, step_status, step_status),
+                (run_id, step_name, step_status, error, step_status, error),
             )
 
 
-def get_steps(run_id: str) -> dict[str, str]:
+def get_steps(run_id: str) -> list[dict[str, Any]]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT step_name, step_status FROM run_steps
+                SELECT step_name, step_status, error FROM run_steps
                 WHERE run_id=%s ORDER BY id
                 """,
                 (run_id,),
             )
-            rows = cur.fetchall()
-            return {r["step_name"]: r["step_status"] for r in rows}
+            return [dict(r) for r in cur.fetchall()]
 
 
 # ── RESULTS ───────────────────────────────
@@ -387,6 +388,192 @@ def get_dashboard_stats() -> dict[str, Any]:
                 """
             )
             return cur.fetchone()
+
+
+def get_dashboard_overview() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    r.id              AS job_id,
+                    r.ticket_id,
+                    r.feature_name,
+                    r.status,
+                    r.created_at,
+                    r.completed_at,
+                    EXTRACT(EPOCH FROM (r.completed_at - r.created_at))::int
+                                      AS duration_secs,
+                    COALESCE(rr.design_score, 0)   AS design_score,
+                    COALESCE(rr.slack_sent, false)  AS slack_sent,
+                    rr.video_path IS NOT NULL       AS has_video,
+                    t.total_cost_usd,
+                    t.total_tokens
+                FROM runs r
+                LEFT JOIN run_results rr ON r.id = rr.run_id
+                LEFT JOIN (
+                    SELECT run_id,
+                           ROUND(SUM(cost_usd)::numeric, 4)  AS total_cost_usd,
+                           SUM(input_tokens + output_tokens)  AS total_tokens
+                    FROM run_token_usage
+                    GROUP BY run_id
+                ) t ON r.id = t.run_id
+                ORDER BY r.created_at DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dashboard_aggregate() -> dict[str, Any]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Run counts and score from runs table (no fan-out)
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)                                       AS total_runs,
+                    COUNT(*) FILTER (WHERE r.status = 'completed') AS completed,
+                    COUNT(*) FILTER (WHERE r.status = 'failed')    AS failed,
+                    COUNT(*) FILTER (WHERE r.status = 'running')   AS running,
+                    ROUND(
+                        100.0 * COUNT(*) FILTER (WHERE r.status = 'completed')
+                        / NULLIF(COUNT(*), 0), 1
+                    )                                              AS success_rate_pct,
+                    COALESCE(
+                        ROUND(AVG(rr.design_score)
+                              FILTER (WHERE rr.design_score > 0)), 0
+                    )                                              AS avg_design_score
+                FROM runs r
+                LEFT JOIN run_results rr ON r.id = rr.run_id
+                """
+            )
+            stats = dict(cur.fetchone())
+
+            # Token totals from separate query to avoid fan-out
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(ROUND(SUM(cost_usd)::numeric, 4), 0)         AS total_cost_usd,
+                    COALESCE(SUM(input_tokens + output_tokens)::bigint, 0) AS total_tokens
+                FROM run_token_usage
+                """
+            )
+            tokens = dict(cur.fetchone())
+            stats.update(tokens)
+            return stats
+
+
+def get_dashboard_cost_breakdown() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    agent_name,
+                    COUNT(*)                          AS call_count,
+                    SUM(input_tokens)                 AS total_input,
+                    SUM(output_tokens)                AS total_output,
+                    ROUND(SUM(cost_usd)::numeric, 4)  AS total_cost,
+                    ROUND(
+                        100.0 * SUM(cost_usd)
+                        / NULLIF(SUM(SUM(cost_usd)) OVER (), 0), 1
+                    )                                 AS pct_of_total
+                FROM run_token_usage
+                GROUP BY agent_name
+                ORDER BY total_cost DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dashboard_step_reliability() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    step_name,
+                    COUNT(*)                                          AS total,
+                    COUNT(*) FILTER (WHERE step_status = 'done')      AS succeeded,
+                    COUNT(*) FILTER (WHERE step_status = 'failed')    AS failed,
+                    COUNT(*) FILTER (WHERE step_status = 'pending')   AS pending,
+                    ROUND(
+                        100.0 * COUNT(*) FILTER (WHERE step_status = 'failed')
+                        / NULLIF(COUNT(*), 0), 1
+                    )                                                 AS failure_rate_pct
+                FROM run_steps
+                GROUP BY step_name
+                ORDER BY failure_rate_pct DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dashboard_step_durations() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    rp.run_id,
+                    rp.step_name,
+                    rp.agent,
+                    rp.status,
+                    EXTRACT(EPOCH FROM (rp.completed_at - rp.started_at))::int
+                        AS duration_secs,
+                    rp.error
+                FROM run_plan rp
+                ORDER BY rp.run_id, rp.step_order
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dashboard_failures() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    r.id          AS job_id,
+                    r.ticket_id,
+                    r.feature_name,
+                    r.created_at,
+                    rs.step_name,
+                    rs.error,
+                    rp.agent
+                FROM runs r
+                JOIN run_steps rs
+                    ON r.id = rs.run_id AND rs.step_status = 'failed'
+                LEFT JOIN run_plan rp
+                    ON r.id = rp.run_id AND rs.step_name = rp.step_name
+                ORDER BY r.created_at DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dashboard_funnel() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    r.id          AS job_id,
+                    r.ticket_id,
+                    r.feature_name,
+                    r.status,
+                    COUNT(*) FILTER (WHERE rs.step_status = 'done')  AS steps_completed,
+                    COUNT(*)                                         AS steps_total,
+                    MAX(CASE WHEN rs.step_status = 'failed'
+                             THEN rs.step_name END)                  AS failed_at_step
+                FROM runs r
+                JOIN run_steps rs ON r.id = rs.run_id
+                GROUP BY r.id, r.ticket_id, r.feature_name, r.status
+                ORDER BY r.created_at DESC
+                """
+            )
+            return [dict(r) for r in cur.fetchall()]
 
 
 # ── GENERIC LIST / GET HELPERS ──────────

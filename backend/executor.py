@@ -84,7 +84,7 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
         error_msg = str(e)
         logger.exception("Step %s failed for run %s", step_name, run_id)
         update_plan_step(run_id, step_name, "failed", error=error_msg)
-        upsert_step(run_id, step_name, "failed")
+        upsert_step(run_id, step_name, "failed", error=error_msg)
 
         if step_name in CRITICAL_STEPS:
             raise

@@ -21,7 +21,6 @@ from db.models import (
     create_run,
     get_all_runs,
     get_browser_data,
-    get_dashboard_stats,
     get_figma_data,
     get_jira_data,
     get_plan,
@@ -32,9 +31,11 @@ from db.models import (
     get_token_usage_summary,
 )
 from orchestrator import run_browser_pipeline, run_pipeline
+from routers.dashboard import router as dashboard_router
 from routers.explorer import router as explorer_router
 
 app = FastAPI(title="SkipTheDemo API")
+app.include_router(dashboard_router)
 app.include_router(explorer_router)
 
 app.add_middleware(
@@ -89,7 +90,10 @@ def status(job_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     steps_raw = get_steps(job_id)
-    steps = [{"name": name, "status": status} for name, status in steps_raw.items()]
+    steps = [
+        {"name": s["step_name"], "status": s["step_status"], "error": s["error"]}
+        for s in steps_raw
+    ]
     return {
         "job_id": run["id"],
         "ticket_id": run["ticket_id"],
@@ -303,12 +307,6 @@ def history_detail(job_id: str):
     if result.get("video_path"):
         result["video_url"] = f"/{result['video_path']}"
     return result
-
-
-@app.get("/dashboard")
-def dashboard():
-    stats = get_dashboard_stats()
-    return {"aggregate_stats": dict(stats)}
 
 
 @app.get("/agent-data/{job_id}")
