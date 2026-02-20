@@ -3,18 +3,20 @@ from __future__ import annotations
 from agent_runner import run_agent_loop
 from tools.figma_tools import (
     export_figma_node,
+    export_figma_nodes,
     get_figma_file_info,
     get_figma_node_info,
     parse_figma_url,
 )
 
-SYSTEM_PROMPT = """You are a Figma agent. Given a Figma link, your job is to extract the design as a PNG image.
+SYSTEM_PROMPT = """You are a Figma agent. Given a Figma link, your job is to extract design screens as PNG images.
 
 Steps:
 1. Parse the Figma URL to extract the file key and node ID.
-2. Optionally inspect the file or node to understand what you're exporting.
-3. Export the node as a PNG image and save it to the specified output directory.
-4. Report what was downloaded — the file path and node name.
+2. Get the node info to see its type and children.
+3. If the node is a container (SECTION, FRAME, PAGE) with FRAME children, use export_children to batch-export all child frames as individual PNGs. Filter to only FRAME-type children (skip COMPONENT_SET, COMPONENT, INSTANCE types — those are reusable elements, not screens).
+4. Also export the parent node itself as a single overview image using export_node_as_image.
+5. Report what was downloaded — list all file paths and screen names.
 
 If the URL has no node-id, get the file info first and export the first page."""
 
@@ -54,8 +56,34 @@ TOOLS = [
         },
     },
     {
+        "name": "export_children",
+        "description": "Batch-export multiple Figma nodes as individual PNG images in a single API call. Pass the list of children (with id and name) from get_node_info. Returns {exported: [{name, id, path}], errors: [...]}.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_key": {"type": "string", "description": "The Figma file key"},
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "Node ID (e.g. '13:1135')"},
+                            "name": {"type": "string", "description": "Node name (used for filename)"},
+                        },
+                        "required": ["id", "name"],
+                    },
+                    "description": "List of nodes to export, each with id and name",
+                },
+                "output_dir": {"type": "string", "description": "Directory to save the exported images"},
+                "scale": {"type": "integer", "description": "Export scale (default 2)", "default": 2},
+                "format": {"type": "string", "description": "Image format (default png)", "default": "png"},
+            },
+            "required": ["file_key", "nodes", "output_dir"],
+        },
+    },
+    {
         "name": "export_node_as_image",
-        "description": "Export a Figma node as a PNG image. Downloads and saves to output_dir. Returns {path, url}.",
+        "description": "Export a single Figma node as a PNG image. Downloads and saves to output_dir. Returns {path, url}.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -78,6 +106,14 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return get_figma_file_info(input["file_key"])
     elif name == "get_node_info":
         return get_figma_node_info(input["file_key"], input["node_id"])
+    elif name == "export_children":
+        return export_figma_nodes(
+            file_key=input["file_key"],
+            nodes=input["nodes"],
+            output_dir=input["output_dir"],
+            scale=input.get("scale", 2),
+            format=input.get("format", "png"),
+        )
     elif name == "export_node_as_image":
         return export_figma_node(
             file_key=input["file_key"],

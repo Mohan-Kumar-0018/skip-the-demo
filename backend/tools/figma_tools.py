@@ -124,3 +124,66 @@ def export_figma_node(
         f.write(img_res.content)
 
     return {"path": path, "url": image_url}
+
+
+def _sanitize_filename(name: str) -> str:
+    """Convert a node name to a safe filename: lowercase, spaces to underscores, strip special chars."""
+    name = name.lower().strip()
+    name = re.sub(r"[^\w\s-]", "", name)
+    name = re.sub(r"[\s-]+", "_", name)
+    return name
+
+
+def export_figma_nodes(
+    file_key: str,
+    nodes: list[dict],
+    output_dir: str,
+    scale: int = 2,
+    format: str = "png",
+) -> dict:
+    """Batch-export multiple Figma nodes in a single API call.
+
+    Args:
+        nodes: List of {"id": "13:1134", "name": "Dashboard"} dicts.
+
+    Returns {exported: [{name, id, path}], errors: [...]}.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    ids_str = ",".join(n["id"] for n in nodes)
+    res = requests.get(
+        f"{BASE_URL}/v1/images/{file_key}",
+        headers=_headers(),
+        params={"ids": ids_str, "format": format, "scale": scale},
+    )
+    if not res.ok:
+        return {"error": f"Figma API error {res.status_code}: {res.text[:200]}"}
+
+    images = res.json().get("images", {})
+
+    # Build lookup: id → name
+    name_map = {n["id"]: n.get("name", n["id"]) for n in nodes}
+
+    exported = []
+    errors = []
+    for node_id, image_url in images.items():
+        name = name_map.get(node_id, node_id)
+        if not image_url:
+            errors.append({"id": node_id, "name": name, "error": "No image URL returned"})
+            continue
+
+        img_res = requests.get(image_url)
+        if not img_res.ok:
+            errors.append({"id": node_id, "name": name, "error": f"Download failed: {img_res.status_code}"})
+            continue
+
+        safe_name = _sanitize_filename(name)
+        filename = f"{safe_name}.{format}"
+        path = os.path.join(output_dir, filename)
+
+        with open(path, "wb") as f:
+            f.write(img_res.content)
+
+        exported.append({"name": name, "id": node_id, "path": path})
+
+    return {"exported": exported, "errors": errors}
