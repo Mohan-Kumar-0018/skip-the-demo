@@ -78,6 +78,27 @@ def get_jira_attachments(ticket_id: str, output_dir: str) -> list[dict[str, str]
     return results
 
 
+def get_jira_comments(ticket_id: str) -> list[dict[str, str]]:
+    """Fetch all comments on a Jira ticket. Returns list of {author, body, created}."""
+    url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}/comment"
+    res = requests.get(url, auth=_auth()).json()
+    comments = res.get("comments", [])
+    results = []
+    for c in comments:
+        # Extract plain text from ADF body
+        body_parts = []
+        for block in c.get("body", {}).get("content", []):
+            for inline in block.get("content", []):
+                if inline.get("type") == "text":
+                    body_parts.append(inline["text"])
+        results.append({
+            "author": c.get("author", {}).get("displayName", "Unknown"),
+            "body": " ".join(body_parts),
+            "created": c.get("created", ""),
+        })
+    return results
+
+
 def add_jira_comment(ticket_id: str, text: str) -> dict[str, str]:
     """Post an ADF-formatted comment on a Jira ticket."""
     url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}/comment"

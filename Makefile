@@ -19,6 +19,11 @@ test-browser:
 test-slack:
 	$(ACTIVATE) && python test_agent.py slack "$(PROMPT)"
 
+## Figma Agent — extract design images from Figma links
+## Example: make test-figma PROMPT="Extract the design from this Figma link: https://www.figma.com/design/KEY/Title?node-id=13-1134. Save to outputs/test-figma/"
+test-figma:
+	$(ACTIVATE) && python test_agent.py figma "$(PROMPT)"
+
 # ─── Single-shot agents (prompt + env vars for files) ────────
 
 ## Vision Agent — compare design image vs screenshot
@@ -49,6 +54,7 @@ help:
 	@echo "  make test-browser    PROMPT=\"...\"                       Browser agent (crawl, screenshot, record)"
 	@echo "  make test-slack      PROMPT=\"...\"                       Slack agent (post messages, upload files)"
 	@echo "  make test-vision     DESIGN=... SCREENSHOT=... PROMPT=  Vision agent (design vs screenshot)"
+	@echo "  make test-figma      PROMPT=\"...\"                       Figma agent (extract design images)"
 	@echo "  make test-synthesis  PROMPT=\"...\" FEATURE=\"...\"         Synthesis agent (PM summary + release notes)"
 	@echo ""
 	@echo "  make serve                                              Start FastAPI backend on :8000"

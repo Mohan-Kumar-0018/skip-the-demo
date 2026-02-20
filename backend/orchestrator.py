@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_runner import run_agent_loop
 from agents.browser_agent import run_browser_agent
+from agents.figma_agent import run_figma_agent
 from agents.jira_agent import run_jira_agent
 from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
@@ -31,6 +32,7 @@ ORCHESTRATOR_SYSTEM_PROMPT = """You are the SkipTheDemo orchestrator. You contro
 Your tools:
 - lookup_knowledge_base: Look up staging URLs, login credentials, and project info from the knowledge base. ALWAYS check this first for staging URLs and credentials before asking the Jira ticket.
 - call_jira_agent: Fetches ticket info, PRD, design files, subtasks from Jira
+- call_figma_agent: Extracts design images from Figma links found in tickets
 - call_browser_agent: Explores staging apps, takes screenshots, records demo videos
 - call_slack_agent: Reads and posts Slack messages
 - analyze_design: Compares design files against screenshots for accuracy scoring
@@ -39,8 +41,9 @@ Your tools:
 
 Given a ticket ID and run ID, plan and execute the full pipeline:
 1. First, use lookup_knowledge_base to find staging URLs and credentials for the project. Then update progress to "jira_fetch/running". Call the Jira agent to fetch the ticket, its attachments (save to outputs/<run_id>/), and subtasks. After, update progress to "jira_fetch/done".
+1b. If the Jira ticket description contains a Figma link, call the Figma agent to extract the design as a PNG. Provide the Figma URL and output directory (outputs/<run_id>/).
 2. Update progress to "browser_crawl/running". Call the browser agent to explore the staging URL (from knowledge base or Jira ticket), navigate flows, take screenshots, and record a video. Include login credentials from the knowledge base if available. The task must include the staging URL and job_id. After, update to "browser_crawl/done".
-3. Update progress to "design_compare/running". If a design file was found, call analyze_design with the design file path and screenshot paths. If no design file, skip. Update to "design_compare/done".
+3. Update progress to "design_compare/running". If a design file was found (from Jira attachments or Figma export), call analyze_design with the design file path and screenshot paths. If no design file, skip. Update to "design_compare/done".
 4. Update progress to "synthesis/running". Call generate_content with the feature name, PRD text (or ticket description), and design result. Update to "synthesis/done".
 5. Update progress to "slack_delivery/running". Call the Slack agent to post the complete PM briefing with all results, and upload the video. Update to "slack_delivery/done".
 
@@ -83,6 +86,17 @@ ORCHESTRATOR_TOOLS = [
             "type": "object",
             "properties": {
                 "task": {"type": "string", "description": "Detailed task description for the Jira agent, including ticket ID and output directory for attachments."},
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "call_figma_agent",
+        "description": "Delegate a task to the Figma agent. Given a Figma URL, it parses the link, exports the design as a PNG image, and saves it. Returns the agent's summary including the file path.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Detailed task description including the Figma URL and output directory for saving the exported image."},
             },
             "required": ["task"],
         },
@@ -195,6 +209,10 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
         elif name == "call_jira_agent":
             logger.info("Orchestrator calling: call_jira_agent")
             return await run_jira_agent(input["task"])
+
+        elif name == "call_figma_agent":
+            logger.info("Orchestrator calling: call_figma_agent")
+            return await run_figma_agent(input["task"])
 
         elif name == "call_browser_agent":
             logger.info("Orchestrator calling: call_browser_agent")
