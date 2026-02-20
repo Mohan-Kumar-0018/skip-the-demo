@@ -164,3 +164,149 @@ def get_results(run_id: str) -> dict[str, Any] | None:
                 (run_id,),
             )
             return cur.fetchone()
+
+
+# ── JIRA DATA ────────────────────────────
+
+
+def save_jira_data(run_id: str, data: dict[str, Any]) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_jira_data
+                  (run_id, ticket_title, ticket_description, staging_url,
+                   ticket_status, assignee, subtasks, attachments,
+                   comments, prd_text, design_links)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    ticket_title       = EXCLUDED.ticket_title,
+                    ticket_description = EXCLUDED.ticket_description,
+                    staging_url        = EXCLUDED.staging_url,
+                    ticket_status      = EXCLUDED.ticket_status,
+                    assignee           = EXCLUDED.assignee,
+                    subtasks           = EXCLUDED.subtasks,
+                    attachments        = EXCLUDED.attachments,
+                    comments           = EXCLUDED.comments,
+                    prd_text           = EXCLUDED.prd_text,
+                    design_links       = EXCLUDED.design_links
+                """,
+                (
+                    run_id,
+                    data.get("ticket_title", ""),
+                    data.get("ticket_description", ""),
+                    data.get("staging_url", ""),
+                    data.get("ticket_status", ""),
+                    data.get("assignee", ""),
+                    json.dumps(data.get("subtasks", [])),
+                    json.dumps(data.get("attachments", [])),
+                    json.dumps(data.get("comments", [])),
+                    data.get("prd_text", ""),
+                    json.dumps(data.get("design_links", [])),
+                ),
+            )
+
+
+def get_jira_data(run_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM run_jira_data WHERE run_id=%s",
+                (run_id,),
+            )
+            return cur.fetchone()
+
+
+# ── FIGMA DATA ───────────────────────────
+
+
+def save_figma_data(run_id: str, data: dict[str, Any]) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_figma_data
+                  (run_id, figma_url, file_key, node_id, file_name,
+                   file_last_modified, pages, node_name, node_type,
+                   node_children, exported_images, export_errors)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    figma_url          = EXCLUDED.figma_url,
+                    file_key           = EXCLUDED.file_key,
+                    node_id            = EXCLUDED.node_id,
+                    file_name          = EXCLUDED.file_name,
+                    file_last_modified = EXCLUDED.file_last_modified,
+                    pages              = EXCLUDED.pages,
+                    node_name          = EXCLUDED.node_name,
+                    node_type          = EXCLUDED.node_type,
+                    node_children      = EXCLUDED.node_children,
+                    exported_images    = EXCLUDED.exported_images,
+                    export_errors      = EXCLUDED.export_errors
+                """,
+                (
+                    run_id,
+                    data.get("figma_url", ""),
+                    data.get("file_key", ""),
+                    data.get("node_id", ""),
+                    data.get("file_name", ""),
+                    data.get("file_last_modified", ""),
+                    json.dumps(data.get("pages", [])),
+                    data.get("node_name", ""),
+                    data.get("node_type", ""),
+                    json.dumps(data.get("node_children", [])),
+                    json.dumps(data.get("exported_images", [])),
+                    json.dumps(data.get("export_errors", [])),
+                ),
+            )
+
+
+def get_figma_data(run_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM run_figma_data WHERE run_id=%s",
+                (run_id,),
+            )
+            return cur.fetchone()
+
+
+# ── BROWSER DATA ─────────────────────────
+
+
+def save_browser_data(run_id: str, data: dict[str, Any]) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_browser_data
+                  (run_id, urls_visited, page_titles, screenshot_paths,
+                   video_path, page_content, interactive_elements)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    urls_visited         = EXCLUDED.urls_visited,
+                    page_titles          = EXCLUDED.page_titles,
+                    screenshot_paths     = EXCLUDED.screenshot_paths,
+                    video_path           = EXCLUDED.video_path,
+                    page_content         = EXCLUDED.page_content,
+                    interactive_elements = EXCLUDED.interactive_elements
+                """,
+                (
+                    run_id,
+                    json.dumps(data.get("urls_visited", [])),
+                    json.dumps(data.get("page_titles", [])),
+                    json.dumps(data.get("screenshot_paths", [])),
+                    data.get("video_path", ""),
+                    data.get("page_content", ""),
+                    json.dumps(data.get("interactive_elements", [])),
+                ),
+            )
+
+
+def get_browser_data(run_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM run_browser_data WHERE run_id=%s",
+                (run_id,),
+            )
+            return cur.fetchone()

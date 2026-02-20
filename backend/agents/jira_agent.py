@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from agent_runner import run_agent_loop
 from tools.jira_tools import (
     add_jira_comment,
@@ -91,11 +93,31 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return {"error": f"Unknown tool: {name}"}
 
 
-async def run_jira_agent(task: str) -> str:
-    """Run the Jira agent with the given task description."""
-    return await run_agent_loop(
+async def run_jira_agent(task: str) -> dict[str, Any]:
+    """Run the Jira agent. Returns {summary: str, data: dict} with collected structured data."""
+    collected: dict[str, Any] = {
+        "ticket": {},
+        "subtasks": [],
+        "attachments": [],
+        "comments": [],
+    }
+
+    async def _collecting_executor(name: str, input: dict) -> str | dict | list:
+        result = await _execute_tool(name, input)
+        if name == "get_jira_ticket":
+            collected["ticket"] = result
+        elif name == "get_jira_subtasks":
+            collected["subtasks"] = result
+        elif name == "get_jira_attachments":
+            collected["attachments"] = result
+        elif name == "get_jira_comments":
+            collected["comments"] = result
+        return result
+
+    summary = await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
-        tool_executor=_execute_tool,
+        tool_executor=_collecting_executor,
         user_message=task,
     )
+    return {"summary": summary, "data": collected}
