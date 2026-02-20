@@ -1,66 +1,87 @@
 from __future__ import annotations
 
-import os
-from typing import Any
+from agent_runner import run_agent_loop
+from tools.jira_tools import (
+    add_jira_comment,
+    get_jira_attachments,
+    get_jira_subtasks,
+    get_jira_ticket,
+)
 
-import requests
+SYSTEM_PROMPT = """You are a Jira agent. Given a task, decide what information to fetch from Jira — ticket details, subtasks, attachments — and summarize what you find.
 
-JIRA_HOST = os.getenv("JIRA_HOST")
-JIRA_EMAIL = os.getenv("JIRA_EMAIL")
-JIRA_TOKEN = os.getenv("JIRA_API_TOKEN")
+When fetching attachments, use the output_dir provided in the task. Categorize what you download (PRD documents, design files, etc).
+
+Always return a clear, structured summary of what you found."""
+
+TOOLS = [
+    {
+        "name": "get_jira_ticket",
+        "description": "Fetch ticket details from Jira. Returns title, description, staging_url, status, assignee.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "The Jira ticket ID (e.g. PROJ-123)"},
+            },
+            "required": ["ticket_id"],
+        },
+    },
+    {
+        "name": "get_jira_subtasks",
+        "description": "Fetch subtasks for a Jira ticket. Returns list of subtask summaries with key, summary, status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "The Jira ticket ID"},
+            },
+            "required": ["ticket_id"],
+        },
+    },
+    {
+        "name": "get_jira_attachments",
+        "description": "Download all attachments from a Jira ticket. Saves files to output_dir. Returns list of {filename, path, mime_type, category}.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "The Jira ticket ID"},
+                "output_dir": {"type": "string", "description": "Directory to save downloaded attachments"},
+            },
+            "required": ["ticket_id", "output_dir"],
+        },
+    },
+    {
+        "name": "add_jira_comment",
+        "description": "Post a comment on a Jira ticket.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "The Jira ticket ID"},
+                "text": {"type": "string", "description": "The comment text to post"},
+            },
+            "required": ["ticket_id", "text"],
+        },
+    },
+]
 
 
-def _auth() -> tuple[str | None, str | None]:
-    return (JIRA_EMAIL, JIRA_TOKEN)
+async def _execute_tool(name: str, input: dict) -> str | dict | list:
+    if name == "get_jira_ticket":
+        return get_jira_ticket(input["ticket_id"])
+    elif name == "get_jira_subtasks":
+        return get_jira_subtasks(input["ticket_id"])
+    elif name == "get_jira_attachments":
+        return get_jira_attachments(input["ticket_id"], input["output_dir"])
+    elif name == "add_jira_comment":
+        return add_jira_comment(input["ticket_id"], input["text"])
+    else:
+        return {"error": f"Unknown tool: {name}"}
 
 
-def get_ticket(ticket_id: str) -> dict[str, Any]:
-    url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}"
-    res = requests.get(url, auth=_auth()).json()
-    f = res["fields"]
-    return {
-        "title": f["summary"],
-        "description": f.get("description", ""),
-        "staging_url": f.get(os.getenv("JIRA_STAGING_URL_FIELD", ""), ""),
-        "attachments": f.get("attachment", []),
-    }
-
-
-def get_attachment_bytes(attachment: dict[str, Any]) -> bytes:
-    return requests.get(attachment["content"], auth=_auth()).content
-
-
-def get_prd_and_design(
-    attachments: list[dict[str, Any]],
-) -> tuple[bytes | None, bytes | None]:
-    """Returns (prd_bytes, design_bytes) — either may be None."""
-    prd: bytes | None = None
-    design: bytes | None = None
-    for att in attachments:
-        name = att["filename"].lower()
-        content = get_attachment_bytes(att)
-        if name.endswith(".pdf"):
-            if "design" in name:
-                design = content
-            else:
-                prd = content
-        elif name.endswith((".png", ".jpg", ".jpeg")):
-            design = content
-    return prd, design
-
-
-def add_comment(ticket_id: str, text: str) -> None:
-    url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}/comment"
-    payload = {
-        "body": {
-            "type": "doc",
-            "version": 1,
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": text}],
-                }
-            ],
-        }
-    }
-    requests.post(url, json=payload, auth=_auth())
+async def run_jira_agent(task: str) -> str:
+    """Run the Jira agent with the given task description."""
+    return await run_agent_loop(
+        system_prompt=SYSTEM_PROMPT,
+        tools=TOOLS,
+        tool_executor=_execute_tool,
+        user_message=task,
+    )

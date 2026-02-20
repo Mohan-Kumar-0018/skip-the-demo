@@ -1,44 +1,87 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from slack_sdk import WebClient
+from agent_runner import run_agent_loop
+from tools.slack_tools import post_slack_message, read_slack_messages, upload_slack_file
 
-client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
-CHANNEL = os.getenv("SLACK_CHANNEL", "#skipdemo-pm")
+DEFAULT_CHANNEL = os.getenv("SLACK_CHANNEL", "#skipdemo-pm")
+
+SYSTEM_PROMPT = f"""You are a Slack agent. You can read and post messages to Slack channels, and upload files.
+
+Default channel: {DEFAULT_CHANNEL}
+
+When posting PM briefings, format messages clearly with:
+- Feature name and design accuracy score with emoji indicators (green >= 90, yellow >= 75, red < 75)
+- Deviations from design
+- Summary and release notes
+- Note about video in thread
+
+After posting a message, if there's a video file to upload, upload it to the thread."""
+
+TOOLS = [
+    {
+        "name": "post_slack_message",
+        "description": "Post a message to a Slack channel. Returns {ok, ts, channel}.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "The Slack channel to post to"},
+                "text": {"type": "string", "description": "The message text (supports Slack markdown)"},
+            },
+            "required": ["channel", "text"],
+        },
+    },
+    {
+        "name": "read_slack_messages",
+        "description": "Read recent messages from a Slack channel. Returns list of {user, text, ts}.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "The Slack channel to read from"},
+                "limit": {"type": "integer", "description": "Number of recent messages to fetch (default 10)"},
+            },
+            "required": ["channel"],
+        },
+    },
+    {
+        "name": "upload_slack_file",
+        "description": "Upload a file to a Slack channel, optionally in a thread.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel": {"type": "string", "description": "The Slack channel"},
+                "file_path": {"type": "string", "description": "Path to the file to upload"},
+                "title": {"type": "string", "description": "Title for the uploaded file"},
+                "thread_ts": {"type": "string", "description": "Thread timestamp to upload into (optional)"},
+            },
+            "required": ["channel", "file_path", "title"],
+        },
+    },
+]
 
 
-def send_pm_briefing(results: dict[str, Any]) -> None:
-    score = results["design_score"]
-    if score >= 90:
-        emoji = "\U0001f7e2"  # green circle
-    elif score >= 75:
-        emoji = "\U0001f7e1"  # yellow circle
-    else:
-        emoji = "\U0001f534"  # red circle
-
-    devs = "\n".join(
-        f"  \u26a0\ufe0f {d['description']}" for d in results["deviations"]
-    ) or "  \u2705 No deviations \u2014 feature matches design."
-
-    message = (
-        "\U0001f680 *SkipTheDemo \u2014 PM Briefing Ready*\n\n"
-        f"*Feature:* {results['feature_name']}\n\n"
-        f"{emoji} *Design Accuracy: {score}/100*\n"
-        f"{devs}\n\n"
-        f"\U0001f4cb *Summary*\n{results['summary']}\n\n"
-        f"\U0001f4dd *Release Notes*\n{results['release_notes']}\n\n"
-        "\U0001f4f9 Demo recording attached in thread."
-    )
-
-    res = client.chat_postMessage(channel=CHANNEL, text=message)
-    ts = res["ts"]
-
-    if results.get("video_path"):
-        client.files_upload_v2(
-            channel=CHANNEL,
-            thread_ts=ts,
-            file=results["video_path"],
-            title=f"{results['feature_name']} \u2014 Demo Recording",
+async def _execute_tool(name: str, input: dict) -> str | dict | list:
+    if name == "post_slack_message":
+        return post_slack_message(input["channel"], input["text"])
+    elif name == "read_slack_messages":
+        return read_slack_messages(input["channel"], input.get("limit", 10))
+    elif name == "upload_slack_file":
+        return upload_slack_file(
+            input["channel"],
+            input["file_path"],
+            input["title"],
+            input.get("thread_ts"),
         )
+    else:
+        return {"error": f"Unknown tool: {name}"}
+
+
+async def run_slack_agent(task: str) -> str:
+    """Run the Slack agent with the given task description."""
+    return await run_agent_loop(
+        system_prompt=SYSTEM_PROMPT,
+        tools=TOOLS,
+        tool_executor=_execute_tool,
+        user_message=task,
+    )
