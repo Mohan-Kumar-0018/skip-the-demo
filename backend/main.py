@@ -13,7 +13,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from db.models import create_run, get_all_runs, get_results, get_run, get_steps
+from db.models import (
+    create_run,
+    get_all_runs,
+    get_browser_data,
+    get_figma_data,
+    get_jira_data,
+    get_results,
+    get_run,
+    get_steps,
+)
 from orchestrator import run_browser_pipeline, run_pipeline
 
 app = FastAPI(title="SkipTheDemo API")
@@ -98,3 +107,18 @@ def history_detail(job_id: str):
     if result.get("video_path"):
         result["video_url"] = f"/{result['video_path']}"
     return result
+
+
+@app.get("/agent-data/{job_id}")
+def agent_data(job_id: str):
+    run = get_run(job_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    jira = get_jira_data(job_id)
+    figma = get_figma_data(job_id)
+    browser = get_browser_data(job_id)
+    return {
+        "jira": dict(jira) if jira else None,
+        "figma": dict(figma) if figma else None,
+        "browser": dict(browser) if browser else None,
+    }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from agent_runner import run_agent_loop
 from tools.browser_tools import (
     click_element,
@@ -166,12 +168,44 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return {"error": f"Unknown tool: {name}"}
 
 
-async def run_browser_agent(task: str) -> str:
-    """Run the browser agent with the given task description."""
-    return await run_agent_loop(
+async def run_browser_agent(task: str) -> dict[str, Any]:
+    """Run the browser agent. Returns {summary: str, data: dict} with collected structured data."""
+    collected: dict[str, Any] = {
+        "urls_visited": [],
+        "page_titles": [],
+        "screenshot_paths": [],
+        "video_path": None,
+        "page_content": "",
+        "interactive_elements": [],
+    }
+
+    async def _collecting_executor(name: str, input: dict) -> str | dict | list:
+        result = await _execute_tool(name, input)
+        if name == "navigate_to_url" and isinstance(result, dict):
+            collected["urls_visited"].append({
+                "url": result.get("url", input.get("url", "")),
+                "title": result.get("title", ""),
+                "description": result.get("description", ""),
+            })
+            collected["page_titles"].append(result.get("title", ""))
+        elif name == "take_screenshot" and isinstance(result, dict):
+            collected["screenshot_paths"].append(result.get("path", ""))
+        elif name == "click_element" and isinstance(result, dict):
+            if result.get("status") == "ok":
+                collected["page_titles"].append(result.get("title", ""))
+        elif name == "get_page_content" and isinstance(result, dict):
+            collected["page_content"] = result.get("text", "")
+        elif name == "list_interactive_elements" and isinstance(result, list):
+            collected["interactive_elements"] = result
+        elif name == "stop_recording" and isinstance(result, dict):
+            collected["video_path"] = result.get("video_path")
+        return result
+
+    summary = await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
-        tool_executor=_execute_tool,
+        tool_executor=_collecting_executor,
         user_message=task,
         max_turns=60,
     )
+    return {"summary": summary, "data": collected}

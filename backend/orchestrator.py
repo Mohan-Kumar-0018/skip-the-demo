@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from agent_runner import run_agent_loop
@@ -12,7 +13,16 @@ from agents.jira_agent import run_jira_agent
 from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
 from agents.vision_agent import compare_design_vs_reality
-from db.models import complete_run, fail_run, save_results, update_run, upsert_step
+from db.models import (
+    complete_run,
+    fail_run,
+    save_browser_data,
+    save_figma_data,
+    save_jira_data,
+    save_results,
+    update_run,
+    upsert_step,
+)
 from tools.kb_tools import get_knowledge, search_knowledge
 from utils.pdf_parser import extract_text
 
@@ -208,16 +218,82 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
 
         elif name == "call_jira_agent":
             logger.info("Orchestrator calling: call_jira_agent")
-            return await run_jira_agent(input["task"])
+            result = await run_jira_agent(input["task"])
+            jira_data = result["data"]
+            ticket = jira_data.get("ticket", {})
+
+            # Extract PRD text from PDF attachments
+            prd_text = ""
+            for att in jira_data.get("attachments", []):
+                if att.get("category") == "prd" and att.get("path", "").endswith(".pdf"):
+                    if os.path.isfile(att["path"]):
+                        with open(att["path"], "rb") as f:
+                            prd_text = extract_text(f.read())
+                        break
+
+            # Extract Figma URLs from description and comments
+            figma_pattern = r'https?://(?:www\.)?figma\.com/(?:design|file)/[^\s\)\]\"\'>]+'
+            design_links = []
+            desc_str = str(ticket.get("description", ""))
+            design_links.extend(re.findall(figma_pattern, desc_str))
+            for comment in jira_data.get("comments", []):
+                design_links.extend(re.findall(figma_pattern, comment.get("body", "")))
+            design_links = list(set(design_links))
+
+            save_jira_data(run_id, {
+                "ticket_title": ticket.get("title", ""),
+                "ticket_description": desc_str,
+                "staging_url": ticket.get("staging_url", ""),
+                "ticket_status": ticket.get("status", ""),
+                "assignee": ticket.get("assignee", ""),
+                "subtasks": jira_data.get("subtasks", []),
+                "attachments": jira_data.get("attachments", []),
+                "comments": jira_data.get("comments", []),
+                "prd_text": prd_text,
+                "design_links": design_links,
+            })
+
+            return result["summary"]
 
         elif name == "call_figma_agent":
             logger.info("Orchestrator calling: call_figma_agent")
-            return await run_figma_agent(input["task"])
+            result = await run_figma_agent(input["task"])
+            figma_data = result["data"]
+            parsed = figma_data.get("parsed_url", {})
+            file_info = figma_data.get("file_info", {})
+            node_info = figma_data.get("node_info", {})
+
+            save_figma_data(run_id, {
+                "figma_url": input["task"],
+                "file_key": parsed.get("file_key", ""),
+                "node_id": parsed.get("node_id", ""),
+                "file_name": file_info.get("name", ""),
+                "file_last_modified": file_info.get("last_modified", ""),
+                "pages": file_info.get("pages", []),
+                "node_name": node_info.get("name", ""),
+                "node_type": node_info.get("type", ""),
+                "node_children": node_info.get("children", []),
+                "exported_images": figma_data.get("exported", []),
+                "export_errors": figma_data.get("errors", []),
+            })
+
+            return result["summary"]
 
         elif name == "call_browser_agent":
             logger.info("Orchestrator calling: call_browser_agent")
             result = await run_browser_agent(input["task"])
-            # Collect screenshot and video paths from outputs dir
+            browser_data = result["data"]
+
+            save_browser_data(run_id, {
+                "urls_visited": browser_data.get("urls_visited", []),
+                "page_titles": browser_data.get("page_titles", []),
+                "screenshot_paths": browser_data.get("screenshot_paths", []),
+                "video_path": browser_data.get("video_path", ""),
+                "page_content": browser_data.get("page_content", ""),
+                "interactive_elements": browser_data.get("interactive_elements", []),
+            })
+
+            # Continue collecting for run_results (existing behavior)
             output_dir = f"outputs/{run_id}"
             if os.path.isdir(output_dir):
                 collected["screenshots"] = [
@@ -228,7 +304,7 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
                 video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
                 if video_files:
                     collected["video_path"] = f"{output_dir}/{video_files[0]}"
-            return result
+            return result["summary"]
 
         elif name == "call_slack_agent":
             logger.info("Orchestrator calling: call_slack_agent")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from agent_runner import run_agent_loop
 from tools.figma_tools import (
     export_figma_node,
@@ -126,11 +128,40 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return {"error": f"Unknown tool: {name}"}
 
 
-async def run_figma_agent(task: str) -> str:
-    """Run the Figma agent with the given task description."""
-    return await run_agent_loop(
+async def run_figma_agent(task: str) -> dict[str, Any]:
+    """Run the Figma agent. Returns {summary: str, data: dict} with collected structured data."""
+    collected: dict[str, Any] = {
+        "parsed_url": {},
+        "file_info": {},
+        "node_info": {},
+        "exported": [],
+        "errors": [],
+    }
+
+    async def _collecting_executor(name: str, input: dict) -> str | dict | list:
+        result = await _execute_tool(name, input)
+        if name == "parse_figma_url":
+            collected["parsed_url"] = result
+        elif name == "get_file_info":
+            collected["file_info"] = result
+        elif name == "get_node_info":
+            collected["node_info"] = result
+        elif name == "export_children":
+            collected["exported"].extend(result.get("exported", []))
+            collected["errors"].extend(result.get("errors", []))
+        elif name == "export_node_as_image":
+            if isinstance(result, dict) and "path" in result:
+                collected["exported"].append({
+                    "name": input.get("node_id", ""),
+                    "id": input.get("node_id", ""),
+                    "path": result["path"],
+                })
+        return result
+
+    summary = await run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
-        tool_executor=_execute_tool,
+        tool_executor=_collecting_executor,
         user_message=task,
     )
+    return {"summary": summary, "data": collected}
