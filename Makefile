@@ -1,7 +1,11 @@
 SHELL := /bin/bash
 
 ACTIVATE := cd backend && source ../venv/bin/activate
-DB_URL   := postgresql://localhost:5432/skipdemo
+
+# Load DATABASE_URL from backend/.env, allow override via environment
+include backend/.env
+export DATABASE_URL
+DB_URL := $(DATABASE_URL)
 
 # ─── Agentic agents (plain text prompt) ──────────────────────
 
