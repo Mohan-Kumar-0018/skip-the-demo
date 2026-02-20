@@ -1,0 +1,26 @@
+{
+  "staging_urls": {
+    "supplier-discovery": {
+      "url": "https://staging.shopup.org/suppliers",
+      "description": "Supplier Discovery & Nomination feature"
+    },
+    "order-management": {
+      "url": "https://staging.shopup.org/orders",
+      "description": "Order management dashboard"
+    }
+  },
+  "credentials": {
+    "staging": {
+      "email": "qa@shopup.org",
+      "password": "staging-pass-123",
+      "description": "Default staging login"
+    }
+  },
+  "projects": {
+    "SG": {
+      "name": "ShopUp Global",
+      "staging_base": "https://staging.shopup.org",
+      "slack_channel": "#skipdemo-pm"
+    }
+  }
+}

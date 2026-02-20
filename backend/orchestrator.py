@@ -12,6 +12,7 @@ from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
 from agents.vision_agent import compare_design_vs_reality
 from db.models import complete_run, fail_run, save_results, update_run, upsert_step
+from tools.kb_tools import get_knowledge, search_knowledge
 from utils.pdf_parser import extract_text
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ STEPS = [
 ORCHESTRATOR_SYSTEM_PROMPT = """You are the SkipTheDemo orchestrator. You control a team of agents to automate demo video creation, design accuracy scoring, and release notes generation from Jira tickets.
 
 Your tools:
+- lookup_knowledge_base: Look up staging URLs, login credentials, and project info from the knowledge base. ALWAYS check this first for staging URLs and credentials before asking the Jira ticket.
 - call_jira_agent: Fetches ticket info, PRD, design files, subtasks from Jira
 - call_browser_agent: Explores staging apps, takes screenshots, records demo videos
 - call_slack_agent: Reads and posts Slack messages
@@ -36,8 +38,8 @@ Your tools:
 - update_progress: Reports progress to the dashboard
 
 Given a ticket ID and run ID, plan and execute the full pipeline:
-1. First, update progress to "jira_fetch/running". Then call the Jira agent to fetch the ticket, its attachments (save to outputs/<run_id>/), and subtasks. After, update progress to "jira_fetch/done".
-2. Update progress to "browser_crawl/running". Call the browser agent to explore the staging URL, navigate flows, take screenshots, and record a video. The task must include the staging URL and job_id. After, update to "browser_crawl/done".
+1. First, use lookup_knowledge_base to find staging URLs and credentials for the project. Then update progress to "jira_fetch/running". Call the Jira agent to fetch the ticket, its attachments (save to outputs/<run_id>/), and subtasks. After, update progress to "jira_fetch/done".
+2. Update progress to "browser_crawl/running". Call the browser agent to explore the staging URL (from knowledge base or Jira ticket), navigate flows, take screenshots, and record a video. Include login credentials from the knowledge base if available. The task must include the staging URL and job_id. After, update to "browser_crawl/done".
 3. Update progress to "design_compare/running". If a design file was found, call analyze_design with the design file path and screenshot paths. If no design file, skip. Update to "design_compare/done".
 4. Update progress to "synthesis/running". Call generate_content with the feature name, PRD text (or ticket description), and design result. Update to "synthesis/done".
 5. Update progress to "slack_delivery/running". Call the Slack agent to post the complete PM briefing with all results, and upload the video. Update to "slack_delivery/done".
@@ -47,6 +49,33 @@ Be autonomous. Make decisions based on what you find. If there's no staging URL,
 IMPORTANT: When calling sub-agents, provide detailed task descriptions with all the context they need (URLs, file paths, job IDs, etc)."""
 
 ORCHESTRATOR_TOOLS = [
+    {
+        "name": "lookup_knowledge_base",
+        "description": "Look up information from the knowledge base — staging URLs, login credentials, project config. Use 'get' mode for direct lookup by category/key, or 'search' mode to find entries matching a query.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["get", "search"],
+                    "description": "'get' for direct category/key lookup, 'search' for keyword search across all entries.",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Category to look up (for 'get' mode). Options: staging_urls, credentials, projects.",
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Specific key within the category (optional for 'get' mode).",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (for 'search' mode). Matches against keys, values, descriptions.",
+                },
+            },
+            "required": ["mode"],
+        },
+    },
     {
         "name": "call_jira_agent",
         "description": "Delegate a task to the Jira agent. It can fetch tickets, subtasks, attachments, and post comments. Returns the agent's summary of what it found.",
@@ -157,7 +186,13 @@ def _build_orchestrator_executor(run_id: str, ticket_id: str):
     }
 
     async def executor(name: str, input: dict) -> Any:
-        if name == "call_jira_agent":
+        if name == "lookup_knowledge_base":
+            logger.info("Orchestrator calling: lookup_knowledge_base")
+            if input["mode"] == "search":
+                return search_knowledge(input.get("query", ""))
+            return get_knowledge(input.get("category", ""), input.get("key"))
+
+        elif name == "call_jira_agent":
             logger.info("Orchestrator calling: call_jira_agent")
             return await run_jira_agent(input["task"])
 
