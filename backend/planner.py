@@ -8,7 +8,7 @@ from typing import Any
 import anthropic
 
 from agent_runner import calc_cost
-from db.models import save_plan, save_token_usage
+from db.models import get_plan, save_plan, save_token_usage
 from tools.kb_tools import get_knowledge, search_knowledge
 
 logger = logging.getLogger(__name__)
@@ -98,3 +98,70 @@ async def create_plan(run_id: str, ticket_id: str) -> list[dict[str, Any]]:
     logger.info("Plan created for run %s: %d steps", run_id, len(steps))
 
     return steps
+
+
+# ── Replanner ──────────────────────────────────
+
+REPLANNER_SYSTEM_PROMPT = """\
+You are the SkipTheDemo pipeline scheduler. Given the current state of all plan steps, \
+decide what to do next.
+
+You will receive a JSON array of steps, each with:
+- step_name, status (pending|running|done|skipped|failed), depends_on, result_summary, error
+
+Rules:
+1. A step is "ready" if its status is "pending" AND all steps in its depends_on list have \
+status "done" or "skipped".
+2. Never dispatch a step that is already "running", "done", "skipped", or "failed".
+3. If any ready steps exist, return action "dispatch" with those step names.
+4. If some steps are still "running" but none are ready, return action "wait".
+5. If ALL steps are "done", "skipped", or "failed" (none pending or running), return action "complete".
+
+Output ONLY a JSON object with:
+- action: "dispatch" | "wait" | "complete"
+- steps: array of step_name strings to dispatch (empty for "wait" and "complete")
+
+Do not include markdown fences or extra text — output raw JSON only."""
+
+
+async def replan(run_id: str, ticket_id: str) -> dict[str, Any]:
+    """Called after each step completes. Returns {action, steps}."""
+
+    plan = get_plan(run_id)
+    if not plan:
+        return {"action": "complete", "steps": []}
+
+    # Build compact state for the LLM
+    plan_state = []
+    for step in plan:
+        plan_state.append({
+            "step_name": step["step_name"],
+            "status": step["status"],
+            "depends_on": step.get("depends_on", []),
+            "result_summary": step.get("result_summary", ""),
+            "error": step.get("error", ""),
+        })
+
+    user_message = (
+        f"Run ID: {run_id}, Ticket: {ticket_id}\n\n"
+        f"Current plan state:\n{json.dumps(plan_state, indent=2)}"
+    )
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=256,
+        system=REPLANNER_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    # Track token usage
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    cost = calc_cost(MODEL, input_tokens, output_tokens)
+    save_token_usage(run_id, "replanner", MODEL, input_tokens, output_tokens, cost)
+
+    text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    decision = json.loads(text)
+    logger.info("Replan for run %s: %s", run_id, decision)
+
+    return decision

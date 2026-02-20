@@ -13,8 +13,7 @@ from db.models import (
     update_run,
     upsert_step,
 )
-from executor import execute_plan
-from planner import create_plan
+from scheduler import PipelineScheduler
 from tools.kb_tools import get_knowledge
 
 logger = logging.getLogger(__name__)
@@ -114,22 +113,16 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
 
 
 async def run_pipeline(run_id: str, ticket_id: str) -> None:
-    """Main entry point — plans then executes the pipeline deterministically."""
+    """Main entry point — plans then executes via event-driven scheduler."""
     try:
         # Init all steps as pending
         for s in STEPS:
             upsert_step(run_id, s, "pending")
 
-        # Phase 1: Plan (1 Claude call)
+        # Phase 1 + 2: Plan and execute via scheduler
         update_run(run_id, "Planning pipeline...", 2)
-        await create_plan(run_id, ticket_id)
-
-        # Phase 2: Execute (deterministic Python)
-        collected = await execute_plan(run_id, ticket_id)
-
-        # Save results and complete
-        save_results(run_id, collected)
-        complete_run(run_id)
+        scheduler = PipelineScheduler(run_id, ticket_id)
+        await scheduler.start()
 
     except Exception as e:
         logger.exception("Pipeline failed for run %s", run_id)

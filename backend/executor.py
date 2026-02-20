@@ -16,10 +16,11 @@ from db.models import (
     get_browser_data,
     get_figma_data,
     get_jira_data,
-    get_plan,
+    get_step_output,
     save_browser_data,
     save_figma_data,
     save_jira_data,
+    save_step_output,
     save_token_usage,
     update_plan_step,
     update_run,
@@ -33,17 +34,6 @@ logger = logging.getLogger(__name__)
 # Steps that abort the whole pipeline on failure
 CRITICAL_STEPS = {"jira_fetch", "browser_crawl"}
 
-# Progress percentages for each step
-STEP_PROGRESS = {
-    "jira_fetch": (5, 15),
-    "prd_parse": (15, 20),
-    "figma_export": (20, 30),
-    "browser_crawl": (30, 60),
-    "design_compare": (60, 75),
-    "synthesis": (75, 90),
-    "slack_delivery": (90, 98),
-}
-
 STEP_LABELS = {
     "jira_fetch": "Fetching Jira ticket...",
     "prd_parse": "Parsing PRD...",
@@ -55,65 +45,52 @@ STEP_LABELS = {
 }
 
 
-async def execute_plan(run_id: str, ticket_id: str) -> dict[str, Any]:
-    """Read the plan from DB and execute each step deterministically.
+async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
+    """Execute a single plan step: mark running, call handler, mark done/failed.
 
-    Returns the collected results dict (same shape as before for save_results).
+    Returns the result summary string.
+    Raises on critical step failure.
     """
-    plan = get_plan(run_id)
-    if not plan:
-        raise RuntimeError(f"No plan found for run {run_id}")
+    step_name = step["step_name"]
+    params = step.get("params") or {}
+    label = STEP_LABELS.get(step_name, f"Running {step_name}...")
 
-    collected: dict[str, Any] = {
-        "feature_name": "",
-        "design_score": 0,
-        "deviations": [],
-        "summary": "",
-        "release_notes": "",
-        "video_path": None,
-        "screenshots": [],
-        "slack_sent": False,
-    }
+    # Mark step running
+    update_plan_step(run_id, step_name, "running")
+    upsert_step(run_id, step_name, "running")
+    update_run(run_id, label, 0)  # progress updated by scheduler
 
-    for step in plan:
-        step_name = step["step_name"]
-        agent = step["agent"]
-        params = step.get("params") or {}
-
-        start_pct, end_pct = STEP_PROGRESS.get(step_name, (0, 0))
-        label = STEP_LABELS.get(step_name, f"Running {step_name}...")
-
-        # Mark step running
-        update_plan_step(run_id, step_name, "running")
-        upsert_step(run_id, step_name, "running")
-        update_run(run_id, label, start_pct)
-
-        try:
-            handler = _STEP_HANDLERS.get(step_name)
-            if handler is None:
-                logger.warning("No handler for step %s, skipping", step_name)
-                update_plan_step(run_id, step_name, "skipped", result_summary="No handler")
-                upsert_step(run_id, step_name, "done")
-                continue
-
-            result_summary = await handler(run_id, ticket_id, params, collected)
-
-            update_plan_step(run_id, step_name, "done", result_summary=result_summary)
+    try:
+        handler = _STEP_HANDLERS.get(step_name)
+        if handler is None:
+            logger.warning("No handler for step %s, skipping", step_name)
+            update_plan_step(run_id, step_name, "skipped", result_summary="No handler")
             upsert_step(run_id, step_name, "done")
-            update_run(run_id, label, end_pct, feature_name=collected.get("feature_name") or None)
+            return "No handler"
 
-        except Exception as e:
-            error_msg = str(e)
-            logger.exception("Step %s failed for run %s", step_name, run_id)
-            update_plan_step(run_id, step_name, "failed", error=error_msg)
-            upsert_step(run_id, step_name, "failed")
+        result_summary = await handler(run_id, ticket_id, params)
 
-            if step_name in CRITICAL_STEPS:
-                raise
-            # Non-critical: log and continue
-            logger.warning("Non-critical step %s failed, continuing: %s", step_name, error_msg)
+        update_plan_step(run_id, step_name, "done", result_summary=result_summary)
+        upsert_step(run_id, step_name, "done")
 
-    return collected
+        # Update feature_name on run if jira provided it
+        jira_out = get_step_output(run_id, "jira_fetch")
+        if jira_out and jira_out.get("feature_name"):
+            update_run(run_id, label, 0, feature_name=jira_out["feature_name"])
+
+        return result_summary
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.exception("Step %s failed for run %s", step_name, run_id)
+        update_plan_step(run_id, step_name, "failed", error=error_msg)
+        upsert_step(run_id, step_name, "failed")
+
+        if step_name in CRITICAL_STEPS:
+            raise
+        # Non-critical: log and continue
+        logger.warning("Non-critical step %s failed, continuing: %s", step_name, error_msg)
+        return f"Failed: {error_msg}"
 
 
 # ── Step handlers ──────────────────────────────
@@ -132,9 +109,7 @@ def _save_usage(run_id: str, agent_name: str, result: dict[str, Any]) -> None:
         )
 
 
-async def _execute_jira(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     task = (
         f"Fetch all details for Jira ticket {ticket_id} including subtasks, "
         f"comments, and all attachments. Save attachments to outputs/{run_id}/."
@@ -176,23 +151,20 @@ async def _execute_jira(
         "design_links": design_links,
     })
 
-    collected["feature_name"] = ticket.get("title", ticket_id)
+    feature_name = ticket.get("title", ticket_id)
+    save_step_output(run_id, "jira_fetch", {"feature_name": feature_name})
 
     return result["summary"]
 
 
-async def _execute_prd_parse(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_prd_parse(run_id: str, ticket_id: str, params: dict) -> str:
     jira = get_jira_data(run_id)
     if jira and jira.get("prd_text"):
         return f"PRD text available ({len(jira['prd_text'])} chars)"
     return "No PRD text found (will use ticket description)"
 
 
-async def _execute_figma(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     jira = get_jira_data(run_id)
     design_links = []
     if jira:
@@ -236,9 +208,7 @@ async def _execute_figma(
     return result["summary"]
 
 
-async def _execute_browser(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     # Get staging URL from params, Jira data, or KB
     staging_url = params.get("staging_url", "")
 
@@ -298,24 +268,29 @@ async def _execute_browser(
         "interactive_elements": browser_data.get("interactive_elements", []),
     })
 
-    # Collect screenshots and video for run_results
+    # Collect screenshots and video for step outputs
+    screenshots: list[str] = []
+    video_path = ""
     output_dir = f"outputs/{run_id}"
     if os.path.isdir(output_dir):
-        collected["screenshots"] = [
+        screenshots = [
             f"{output_dir}/{f}"
             for f in sorted(os.listdir(output_dir))
             if f.endswith(".png")
         ]
         video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
         if video_files:
-            collected["video_path"] = f"{output_dir}/{video_files[0]}"
+            video_path = f"{output_dir}/{video_files[0]}"
+
+    save_step_output(run_id, "browser_crawl", {
+        "screenshots": screenshots,
+        "video_path": video_path,
+    })
 
     return result["summary"]
 
 
-async def _execute_vision(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
     # Find design image: prefer Figma export, fallback to Jira attachment
     design_path = None
 
@@ -341,18 +316,26 @@ async def _execute_vision(
                     design_path = att["path"]
                     break
 
-    screenshots = collected.get("screenshots", [])
+    # Read screenshots from browser step output
+    browser_out = get_step_output(run_id, "browser_crawl")
+    screenshots = browser_out.get("screenshots", []) if browser_out else []
+
     if not design_path or not screenshots:
-        collected["design_score"] = 0
-        collected["deviations"] = []
+        save_step_output(run_id, "design_compare", {
+            "design_score": 0,
+            "deviations": [],
+        })
         return "Skipped — no design file or no screenshots"
 
     with open(design_path, "rb") as f:
         design_bytes = f.read()
 
     result = compare_design_vs_reality(design_bytes, screenshots)
-    collected["design_score"] = result["score"]
-    collected["deviations"] = result["deviations"]
+
+    save_step_output(run_id, "design_compare", {
+        "design_score": result["score"],
+        "deviations": result["deviations"],
+    })
 
     usage = result.pop("usage", {})
     if usage:
@@ -367,24 +350,29 @@ async def _execute_vision(
     return f"Design score: {result['score']}/100, {len(result['deviations'])} deviations"
 
 
-async def _execute_synthesis(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
+    # Read inputs from DB
+    jira_out = get_step_output(run_id, "jira_fetch")
+    feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
+
     jira = get_jira_data(run_id)
-    feature_name = collected.get("feature_name", ticket_id)
     prd_text = ""
     if jira:
         prd_text = jira.get("prd_text", "") or jira.get("ticket_description", "")
 
+    vision_out = get_step_output(run_id, "design_compare")
     design_result = {
-        "score": collected.get("design_score", 0),
-        "deviations": collected.get("deviations", []),
+        "score": vision_out.get("design_score", 0) if vision_out else 0,
+        "deviations": vision_out.get("deviations", []) if vision_out else [],
         "summary": "",
     }
 
     result = generate_pm_summary(feature_name, prd_text, design_result)
-    collected["summary"] = result["summary"]
-    collected["release_notes"] = result["release_notes"]
+
+    save_step_output(run_id, "synthesis", {
+        "summary": result["summary"],
+        "release_notes": result["release_notes"],
+    })
 
     usage = result.pop("usage", {})
     if usage:
@@ -399,30 +387,37 @@ async def _execute_synthesis(
     return f"Summary generated ({len(result['summary'])} chars)"
 
 
-async def _execute_slack(
-    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
-) -> str:
+async def _execute_slack(run_id: str, ticket_id: str, params: dict) -> str:
+    # Read all upstream outputs from DB
+    jira_out = get_step_output(run_id, "jira_fetch")
+    browser_out = get_step_output(run_id, "browser_crawl")
+    vision_out = get_step_output(run_id, "design_compare")
+    synthesis_out = get_step_output(run_id, "synthesis")
+
+    feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
+    design_score = vision_out.get("design_score", 0) if vision_out else 0
+    deviations = vision_out.get("deviations", []) if vision_out else []
+    summary = synthesis_out.get("summary", "") if synthesis_out else ""
+    release_notes = synthesis_out.get("release_notes", "") if synthesis_out else ""
+    video_path = browser_out.get("video_path", "") if browser_out else ""
+
     # Build briefing message
     parts = [
-        f"*SkipTheDemo Briefing — {collected.get('feature_name', ticket_id)}*\n",
-        f"*Design Score:* {collected.get('design_score', 0)}/100",
+        f"*SkipTheDemo Briefing — {feature_name}*\n",
+        f"*Design Score:* {design_score}/100",
     ]
 
-    deviations = collected.get("deviations", [])
     if deviations:
         parts.append(f"*Deviations:* {len(deviations)} found")
 
-    summary = collected.get("summary", "")
     if summary:
         parts.append(f"\n*Summary:*\n{summary}")
 
-    release_notes = collected.get("release_notes", "")
     if release_notes:
         parts.append(f"\n*Release Notes:*\n{release_notes}")
 
     briefing = "\n".join(parts)
 
-    video_path = collected.get("video_path", "")
     upload_instruction = ""
     if video_path and os.path.isfile(video_path):
         upload_instruction = f" Also upload the demo video at {video_path}."
@@ -434,7 +429,8 @@ async def _execute_slack(
 
     result = await run_slack_agent(task)
     _save_usage(run_id, "slack", result)
-    collected["slack_sent"] = True
+
+    save_step_output(run_id, "slack_delivery", {"slack_sent": True})
 
     return "Slack message delivered"
 

@@ -103,3 +103,12 @@ CREATE TABLE IF NOT EXISTS run_plan (
     created_at      TIMESTAMP       DEFAULT NOW(),
     UNIQUE(run_id, step_name)
 );
+
+CREATE TABLE IF NOT EXISTS run_step_outputs (
+    id          SERIAL       PRIMARY KEY,
+    run_id      VARCHAR(8)   REFERENCES runs(id),
+    step_name   VARCHAR(100) NOT NULL,
+    outputs     JSONB        DEFAULT '{}',
+    created_at  TIMESTAMP    DEFAULT NOW(),
+    UNIQUE(run_id, step_name)
+);

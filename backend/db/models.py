@@ -504,6 +504,74 @@ def get_run_token_usage_by_id(usage_id: int) -> dict[str, Any] | None:
     return _get_by_id("run_token_usage", usage_id)
 
 
+# ── STEP OUTPUTS ─────────────────────────
+
+
+def save_step_output(run_id: str, step_name: str, outputs: dict[str, Any]) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO run_step_outputs (run_id, step_name, outputs)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (run_id, step_name)
+                DO UPDATE SET outputs = EXCLUDED.outputs
+                """,
+                (run_id, step_name, json.dumps(outputs)),
+            )
+
+
+def get_step_output(run_id: str, step_name: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT outputs FROM run_step_outputs WHERE run_id=%s AND step_name=%s",
+                (run_id, step_name),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            outputs = row["outputs"]
+            return json.loads(outputs) if isinstance(outputs, str) else outputs
+
+
+def get_all_step_outputs(run_id: str) -> dict[str, dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT step_name, outputs FROM run_step_outputs WHERE run_id=%s",
+                (run_id,),
+            )
+            result = {}
+            for row in cur.fetchall():
+                outputs = row["outputs"]
+                result[row["step_name"]] = (
+                    json.loads(outputs) if isinstance(outputs, str) else outputs
+                )
+            return result
+
+
+def assemble_results(run_id: str) -> dict[str, Any]:
+    """Build the final run_results shape from all step outputs in the DB."""
+    outputs = get_all_step_outputs(run_id)
+
+    jira_out = outputs.get("jira_fetch", {})
+    browser_out = outputs.get("browser_crawl", {})
+    vision_out = outputs.get("design_compare", {})
+    synthesis_out = outputs.get("synthesis", {})
+    slack_out = outputs.get("slack_delivery", {})
+
+    return {
+        "design_score": vision_out.get("design_score", 0),
+        "deviations": vision_out.get("deviations", []),
+        "summary": synthesis_out.get("summary", ""),
+        "release_notes": synthesis_out.get("release_notes", ""),
+        "video_path": browser_out.get("video_path"),
+        "screenshots": browser_out.get("screenshots", []),
+        "slack_sent": slack_out.get("slack_sent", False),
+    }
+
+
 # ── PLAN ─────────────────────────────────
 
 
