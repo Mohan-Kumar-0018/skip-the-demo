@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import anthropic
@@ -17,7 +18,7 @@ def generate_pm_summary(
     )
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
         max_tokens=1200,
         messages=[
             {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Callable, Awaitable
 
 import anthropic
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic()
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 
 async def run_agent_loop(
