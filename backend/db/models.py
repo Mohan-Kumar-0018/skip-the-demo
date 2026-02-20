@@ -367,6 +367,28 @@ def get_token_usage_summary(run_id: str) -> dict[str, Any]:
             return cur.fetchone()
 
 
+# ── DASHBOARD ─────────────────────────
+
+
+def get_dashboard_stats() -> dict[str, Any]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*) AS total_runs,
+                  COUNT(*) FILTER (WHERE rr.video_path IS NOT NULL) AS total_videos,
+                  COUNT(*) FILTER (WHERE rr.release_notes IS NOT NULL) AS total_pdfs,
+                  COUNT(*) FILTER (WHERE rj.id IS NOT NULL) AS total_jiras,
+                  COALESCE(ROUND(AVG(rr.design_score) FILTER (WHERE rr.design_score IS NOT NULL)), 0) AS avg_score
+                FROM runs r
+                LEFT JOIN run_results rr ON r.id = rr.run_id
+                LEFT JOIN run_jira_data rj ON r.id = rj.run_id
+                """
+            )
+            return cur.fetchone()
+
+
 # ── GENERIC LIST / GET HELPERS ──────────
 
 
