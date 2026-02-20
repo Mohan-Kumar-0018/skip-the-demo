@@ -26,8 +26,10 @@ from db.models import (
     get_token_usage_summary,
 )
 from orchestrator import run_browser_pipeline, run_pipeline
+from routers.explorer import router as explorer_router
 
 app = FastAPI(title="SkipTheDemo API")
+app.include_router(explorer_router)
 
 app.add_middleware(
     CORSMiddleware,

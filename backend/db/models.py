@@ -365,3 +365,118 @@ def get_token_usage_summary(run_id: str) -> dict[str, Any]:
                 (run_id,),
             )
             return cur.fetchone()
+
+
+# ── GENERIC LIST / GET HELPERS ──────────
+
+
+def _list_table(
+    table: str,
+    limit: int = 50,
+    offset: int = 0,
+    order_by: str = "created_at DESC",
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
+            total = cur.fetchone()["cnt"]
+
+            cur.execute(
+                f"SELECT * FROM {table} ORDER BY {order_by} LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
+            items = [dict(r) for r in cur.fetchall()]
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+def _get_by_id(
+    table: str,
+    id_value: Any,
+    id_column: str = "id",
+) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM {table} WHERE {id_column} = %s",
+                (id_value,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+# ── EXPLORER: RUNS ──────────────────────
+
+
+def list_runs(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("runs", limit, offset)
+
+
+def get_run_by_id(run_id: str) -> dict[str, Any] | None:
+    return _get_by_id("runs", run_id)
+
+
+# ── EXPLORER: RUN STEPS ────────────────
+
+
+def list_run_steps(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_steps", limit, offset, order_by="id DESC")
+
+
+def get_run_step_by_id(step_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_steps", step_id)
+
+
+# ── EXPLORER: RUN RESULTS ──────────────
+
+
+def list_run_results(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_results", limit, offset)
+
+
+def get_run_result_by_id(result_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_results", result_id)
+
+
+# ── EXPLORER: RUN JIRA DATA ────────────
+
+
+def list_run_jira_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_jira_data", limit, offset)
+
+
+def get_run_jira_data_by_id(jira_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_jira_data", jira_id)
+
+
+# ── EXPLORER: RUN FIGMA DATA ───────────
+
+
+def list_run_figma_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_figma_data", limit, offset)
+
+
+def get_run_figma_data_by_id(figma_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_figma_data", figma_id)
+
+
+# ── EXPLORER: RUN BROWSER DATA ─────────
+
+
+def list_run_browser_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_browser_data", limit, offset)
+
+
+def get_run_browser_data_by_id(browser_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_browser_data", browser_id)
+
+
+# ── EXPLORER: RUN TOKEN USAGE ──────────
+
+
+def list_run_token_usage(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_token_usage", limit, offset)
+
+
+def get_run_token_usage_by_id(usage_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_token_usage", usage_id)
