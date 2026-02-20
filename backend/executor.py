@@ -1,0 +1,452 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from typing import Any
+
+from agents.browser_agent import run_browser_agent
+from agents.figma_agent import run_figma_agent
+from agents.jira_agent import run_jira_agent
+from agents.slack_agent import run_slack_agent
+from agents.synthesis_agent import generate_pm_summary
+from agents.vision_agent import compare_design_vs_reality
+from db.models import (
+    get_browser_data,
+    get_figma_data,
+    get_jira_data,
+    get_plan,
+    save_browser_data,
+    save_figma_data,
+    save_jira_data,
+    save_token_usage,
+    update_plan_step,
+    update_run,
+    upsert_step,
+)
+from tools.kb_tools import get_knowledge, search_knowledge
+from utils.pdf_parser import extract_text
+
+logger = logging.getLogger(__name__)
+
+# Steps that abort the whole pipeline on failure
+CRITICAL_STEPS = {"jira_fetch", "browser_crawl"}
+
+# Progress percentages for each step
+STEP_PROGRESS = {
+    "jira_fetch": (5, 15),
+    "prd_parse": (15, 20),
+    "figma_export": (20, 30),
+    "browser_crawl": (30, 60),
+    "design_compare": (60, 75),
+    "synthesis": (75, 90),
+    "slack_delivery": (90, 98),
+}
+
+STEP_LABELS = {
+    "jira_fetch": "Fetching Jira ticket...",
+    "prd_parse": "Parsing PRD...",
+    "figma_export": "Exporting Figma designs...",
+    "browser_crawl": "Crawling staging app...",
+    "design_compare": "Comparing designs...",
+    "synthesis": "Generating summary...",
+    "slack_delivery": "Delivering to Slack...",
+}
+
+
+async def execute_plan(run_id: str, ticket_id: str) -> dict[str, Any]:
+    """Read the plan from DB and execute each step deterministically.
+
+    Returns the collected results dict (same shape as before for save_results).
+    """
+    plan = get_plan(run_id)
+    if not plan:
+        raise RuntimeError(f"No plan found for run {run_id}")
+
+    collected: dict[str, Any] = {
+        "feature_name": "",
+        "design_score": 0,
+        "deviations": [],
+        "summary": "",
+        "release_notes": "",
+        "video_path": None,
+        "screenshots": [],
+        "slack_sent": False,
+    }
+
+    for step in plan:
+        step_name = step["step_name"]
+        agent = step["agent"]
+        params = step.get("params") or {}
+
+        start_pct, end_pct = STEP_PROGRESS.get(step_name, (0, 0))
+        label = STEP_LABELS.get(step_name, f"Running {step_name}...")
+
+        # Mark step running
+        update_plan_step(run_id, step_name, "running")
+        upsert_step(run_id, step_name, "running")
+        update_run(run_id, label, start_pct)
+
+        try:
+            handler = _STEP_HANDLERS.get(step_name)
+            if handler is None:
+                logger.warning("No handler for step %s, skipping", step_name)
+                update_plan_step(run_id, step_name, "skipped", result_summary="No handler")
+                upsert_step(run_id, step_name, "done")
+                continue
+
+            result_summary = await handler(run_id, ticket_id, params, collected)
+
+            update_plan_step(run_id, step_name, "done", result_summary=result_summary)
+            upsert_step(run_id, step_name, "done")
+            update_run(run_id, label, end_pct, feature_name=collected.get("feature_name") or None)
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.exception("Step %s failed for run %s", step_name, run_id)
+            update_plan_step(run_id, step_name, "failed", error=error_msg)
+            upsert_step(run_id, step_name, "failed")
+
+            if step_name in CRITICAL_STEPS:
+                raise
+            # Non-critical: log and continue
+            logger.warning("Non-critical step %s failed, continuing: %s", step_name, error_msg)
+
+    return collected
+
+
+# ── Step handlers ──────────────────────────────
+
+
+def _save_usage(run_id: str, agent_name: str, result: dict[str, Any]) -> None:
+    usage = result.get("usage", {})
+    if usage:
+        save_token_usage(
+            run_id,
+            agent_name,
+            usage.get("model", ""),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            usage.get("cost_usd", 0),
+        )
+
+
+async def _execute_jira(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    task = (
+        f"Fetch all details for Jira ticket {ticket_id} including subtasks, "
+        f"comments, and all attachments. Save attachments to outputs/{run_id}/."
+    )
+    result = await run_jira_agent(task)
+    _save_usage(run_id, "jira", result)
+
+    jira_data = result["data"]
+    ticket = jira_data.get("ticket", {})
+
+    # Extract PRD text from PDF attachments
+    prd_text = ""
+    for att in jira_data.get("attachments", []):
+        if att.get("category") == "prd" and att.get("path", "").endswith(".pdf"):
+            if os.path.isfile(att["path"]):
+                with open(att["path"], "rb") as f:
+                    prd_text = extract_text(f.read())
+                break
+
+    # Extract Figma URLs from description and comments
+    figma_pattern = r'https?://(?:www\.)?figma\.com/(?:design|file)/[^\s\)\]\"\'>]+'
+    design_links: list[str] = []
+    desc_str = str(ticket.get("description", ""))
+    design_links.extend(re.findall(figma_pattern, desc_str))
+    for comment in jira_data.get("comments", []):
+        design_links.extend(re.findall(figma_pattern, comment.get("body", "")))
+    design_links = list(set(design_links))
+
+    save_jira_data(run_id, {
+        "ticket_title": ticket.get("title", ""),
+        "ticket_description": desc_str,
+        "staging_url": ticket.get("staging_url", ""),
+        "ticket_status": ticket.get("status", ""),
+        "assignee": ticket.get("assignee", ""),
+        "subtasks": jira_data.get("subtasks", []),
+        "attachments": jira_data.get("attachments", []),
+        "comments": jira_data.get("comments", []),
+        "prd_text": prd_text,
+        "design_links": design_links,
+    })
+
+    collected["feature_name"] = ticket.get("title", ticket_id)
+
+    return result["summary"]
+
+
+async def _execute_prd_parse(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    jira = get_jira_data(run_id)
+    if jira and jira.get("prd_text"):
+        return f"PRD text available ({len(jira['prd_text'])} chars)"
+    return "No PRD text found (will use ticket description)"
+
+
+async def _execute_figma(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    jira = get_jira_data(run_id)
+    design_links = []
+    if jira:
+        raw = jira.get("design_links", [])
+        if isinstance(raw, str):
+            design_links = json.loads(raw)
+        else:
+            design_links = raw
+
+    if not design_links:
+        update_plan_step(run_id, "figma_export", "skipped", result_summary="No Figma links found")
+        return "Skipped — no Figma links"
+
+    figma_url = design_links[0]
+    task = (
+        f"Extract the design from this Figma link: {figma_url}. "
+        f"Save exported images to outputs/{run_id}/."
+    )
+    result = await run_figma_agent(task)
+    _save_usage(run_id, "figma", result)
+
+    figma_data = result["data"]
+    parsed = figma_data.get("parsed_url", {})
+    file_info = figma_data.get("file_info", {})
+    node_info = figma_data.get("node_info", {})
+
+    save_figma_data(run_id, {
+        "figma_url": figma_url,
+        "file_key": parsed.get("file_key", ""),
+        "node_id": parsed.get("node_id", ""),
+        "file_name": file_info.get("name", ""),
+        "file_last_modified": file_info.get("last_modified", ""),
+        "pages": file_info.get("pages", []),
+        "node_name": node_info.get("name", ""),
+        "node_type": node_info.get("type", ""),
+        "node_children": node_info.get("children", []),
+        "exported_images": figma_data.get("exported", []),
+        "export_errors": figma_data.get("errors", []),
+    })
+
+    return result["summary"]
+
+
+async def _execute_browser(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    # Get staging URL from params, Jira data, or KB
+    staging_url = params.get("staging_url", "")
+
+    if not staging_url:
+        jira = get_jira_data(run_id)
+        if jira:
+            staging_url = jira.get("staging_url", "")
+
+    if not staging_url:
+        # Try KB lookup
+        project_key = ticket_id.split("-")[0].lower() if "-" in ticket_id else ""
+        if project_key:
+            kb_results = search_knowledge(project_key)
+            for hit in kb_results:
+                if hit.get("category") == "staging_urls":
+                    data = hit.get("data", {})
+                    if isinstance(data, dict) and "url" in data:
+                        staging_url = data["url"]
+                        break
+
+    # Build credentials text from KB
+    creds_text = ""
+    creds = get_knowledge("credentials")
+    if isinstance(creds, dict) and "error" not in creds:
+        staging_creds = creds.get("staging")
+        if isinstance(staging_creds, dict):
+            creds_text = "\n\nLogin credentials:\n" + "\n".join(
+                f"  {k}: {v}" for k, v in staging_creds.items()
+            )
+
+    task = (
+        f"Explore the web application at {staging_url} thoroughly.\n"
+        f"Job ID: {run_id}\n"
+        f"Output directory: outputs/{run_id}/\n"
+        f"{creds_text}\n\n"
+        "Instructions:\n"
+        "1. Navigate to the URL\n"
+        "2. If there's a login page, use the provided credentials to log in\n"
+        "3. Take a screenshot of every page you visit\n"
+        "4. List interactive elements and click through ALL navigation links, tabs, and menu items\n"
+        "5. Systematically visit every reachable page in the application\n"
+        "6. Take a screenshot after each navigation\n"
+        "7. When you've explored all pages, stop the recording\n"
+        "8. Provide a summary of all pages and flows discovered"
+    )
+
+    result = await run_browser_agent(task)
+    _save_usage(run_id, "browser", result)
+
+    browser_data = result["data"]
+    save_browser_data(run_id, {
+        "urls_visited": browser_data.get("urls_visited", []),
+        "page_titles": browser_data.get("page_titles", []),
+        "screenshot_paths": browser_data.get("screenshot_paths", []),
+        "video_path": browser_data.get("video_path", ""),
+        "page_content": browser_data.get("page_content", ""),
+        "interactive_elements": browser_data.get("interactive_elements", []),
+    })
+
+    # Collect screenshots and video for run_results
+    output_dir = f"outputs/{run_id}"
+    if os.path.isdir(output_dir):
+        collected["screenshots"] = [
+            f"{output_dir}/{f}"
+            for f in sorted(os.listdir(output_dir))
+            if f.endswith(".png")
+        ]
+        video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
+        if video_files:
+            collected["video_path"] = f"{output_dir}/{video_files[0]}"
+
+    return result["summary"]
+
+
+async def _execute_vision(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    # Find design image: prefer Figma export, fallback to Jira attachment
+    design_path = None
+
+    figma = get_figma_data(run_id)
+    if figma:
+        exported = figma.get("exported_images", [])
+        if isinstance(exported, str):
+            exported = json.loads(exported)
+        for img in exported:
+            path = img.get("path", "") if isinstance(img, dict) else str(img)
+            if path and os.path.isfile(path):
+                design_path = path
+                break
+
+    if not design_path:
+        jira = get_jira_data(run_id)
+        if jira:
+            attachments = jira.get("attachments", [])
+            if isinstance(attachments, str):
+                attachments = json.loads(attachments)
+            for att in attachments:
+                if att.get("category") == "design" and os.path.isfile(att.get("path", "")):
+                    design_path = att["path"]
+                    break
+
+    screenshots = collected.get("screenshots", [])
+    if not design_path or not screenshots:
+        collected["design_score"] = 0
+        collected["deviations"] = []
+        return "Skipped — no design file or no screenshots"
+
+    with open(design_path, "rb") as f:
+        design_bytes = f.read()
+
+    result = compare_design_vs_reality(design_bytes, screenshots)
+    collected["design_score"] = result["score"]
+    collected["deviations"] = result["deviations"]
+
+    usage = result.pop("usage", {})
+    if usage:
+        save_token_usage(
+            run_id, "vision",
+            usage.get("model", ""),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            usage.get("cost_usd", 0),
+        )
+
+    return f"Design score: {result['score']}/100, {len(result['deviations'])} deviations"
+
+
+async def _execute_synthesis(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    jira = get_jira_data(run_id)
+    feature_name = collected.get("feature_name", ticket_id)
+    prd_text = ""
+    if jira:
+        prd_text = jira.get("prd_text", "") or jira.get("ticket_description", "")
+
+    design_result = {
+        "score": collected.get("design_score", 0),
+        "deviations": collected.get("deviations", []),
+        "summary": "",
+    }
+
+    result = generate_pm_summary(feature_name, prd_text, design_result)
+    collected["summary"] = result["summary"]
+    collected["release_notes"] = result["release_notes"]
+
+    usage = result.pop("usage", {})
+    if usage:
+        save_token_usage(
+            run_id, "synthesis",
+            usage.get("model", ""),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            usage.get("cost_usd", 0),
+        )
+
+    return f"Summary generated ({len(result['summary'])} chars)"
+
+
+async def _execute_slack(
+    run_id: str, ticket_id: str, params: dict, collected: dict[str, Any]
+) -> str:
+    # Build briefing message
+    parts = [
+        f"*SkipTheDemo Briefing — {collected.get('feature_name', ticket_id)}*\n",
+        f"*Design Score:* {collected.get('design_score', 0)}/100",
+    ]
+
+    deviations = collected.get("deviations", [])
+    if deviations:
+        parts.append(f"*Deviations:* {len(deviations)} found")
+
+    summary = collected.get("summary", "")
+    if summary:
+        parts.append(f"\n*Summary:*\n{summary}")
+
+    release_notes = collected.get("release_notes", "")
+    if release_notes:
+        parts.append(f"\n*Release Notes:*\n{release_notes}")
+
+    briefing = "\n".join(parts)
+
+    video_path = collected.get("video_path", "")
+    upload_instruction = ""
+    if video_path and os.path.isfile(video_path):
+        upload_instruction = f" Also upload the demo video at {video_path}."
+
+    task = (
+        f"Post the following PM briefing to the #skipdemo-pm Slack channel:\n\n"
+        f"{briefing}\n\n{upload_instruction}"
+    )
+
+    result = await run_slack_agent(task)
+    _save_usage(run_id, "slack", result)
+    collected["slack_sent"] = True
+
+    return "Slack message delivered"
+
+
+# ── Handler registry ───────────────────────────
+
+_STEP_HANDLERS = {
+    "jira_fetch": _execute_jira,
+    "prd_parse": _execute_prd_parse,
+    "figma_export": _execute_figma,
+    "browser_crawl": _execute_browser,
+    "design_compare": _execute_vision,
+    "synthesis": _execute_synthesis,
+    "slack_delivery": _execute_slack,
+}

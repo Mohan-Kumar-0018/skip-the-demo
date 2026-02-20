@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 ACTIVATE := cd backend && source ../venv/bin/activate
+DB_URL   := postgresql://postgres:skipdemo@localhost:5432/skipdemo
 
 # ─── Agentic agents (plain text prompt) ──────────────────────
 
@@ -45,6 +46,11 @@ test-synthesis:
 
 # ─── Utilities ───────────────────────────────────────────────
 
+## Reset DB — drop all tables and recreate from schema
+db-reset:
+	psql $(DB_URL) -c "DROP TABLE IF EXISTS run_plan, run_token_usage, run_browser_data, run_figma_data, run_jira_data, run_results, run_steps, runs CASCADE;"
+	psql $(DB_URL) -f backend/db/schema.sql
+
 ## Run the full backend server
 serve:
 	$(ACTIVATE) && uvicorn main:app --reload --port 8000
@@ -64,4 +70,5 @@ help:
 	@echo "  make test-synthesis  PROMPT=\"...\" FEATURE=\"...\"         Synthesis agent (PM summary + release notes)"
 	@echo ""
 	@echo "  make serve                                              Start FastAPI backend on :8000"
+	@echo "  make db-reset                                           Drop all tables and recreate from schema"
 	@echo ""

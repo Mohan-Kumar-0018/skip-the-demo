@@ -86,3 +86,20 @@ CREATE TABLE IF NOT EXISTS run_token_usage (
     cost_usd        NUMERIC(10,6)   DEFAULT 0,
     created_at      TIMESTAMP       DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS run_plan (
+    id              SERIAL          PRIMARY KEY,
+    run_id          VARCHAR(8)      REFERENCES runs(id),
+    step_order      INTEGER         NOT NULL,
+    step_name       VARCHAR(100)    NOT NULL,
+    agent           VARCHAR(50)     NOT NULL,
+    params          JSONB           DEFAULT '{}',
+    depends_on      VARCHAR(100)[]  DEFAULT '{}',
+    status          VARCHAR(50)     DEFAULT 'pending',
+    result_summary  TEXT,
+    error           TEXT,
+    started_at      TIMESTAMP,
+    completed_at    TIMESTAMP,
+    created_at      TIMESTAMP       DEFAULT NOW(),
+    UNIQUE(run_id, step_name)
+);

@@ -19,6 +19,7 @@ from db.models import (
     get_browser_data,
     get_figma_data,
     get_jira_data,
+    get_plan,
     get_results,
     get_run,
     get_steps,
@@ -126,6 +127,15 @@ def agent_data(job_id: str):
         "figma": dict(figma) if figma else None,
         "browser": dict(browser) if browser else None,
     }
+
+
+@app.get("/plan/{job_id}")
+def plan(job_id: str):
+    run = get_run(job_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    steps = get_plan(job_id)
+    return {"run_id": job_id, "steps": steps}
 
 
 @app.get("/token-usage/{job_id}")

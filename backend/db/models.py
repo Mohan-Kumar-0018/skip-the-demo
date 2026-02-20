@@ -480,3 +480,87 @@ def list_run_token_usage(limit: int = 50, offset: int = 0) -> dict[str, Any]:
 
 def get_run_token_usage_by_id(usage_id: int) -> dict[str, Any] | None:
     return _get_by_id("run_token_usage", usage_id)
+
+
+# ── PLAN ─────────────────────────────────
+
+
+def save_plan(run_id: str, steps: list[dict[str, Any]]) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for step in steps:
+                cur.execute(
+                    """
+                    INSERT INTO run_plan
+                      (run_id, step_order, step_name, agent, params, depends_on, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                    ON CONFLICT (run_id, step_name) DO UPDATE SET
+                        step_order = EXCLUDED.step_order,
+                        agent      = EXCLUDED.agent,
+                        params     = EXCLUDED.params,
+                        depends_on = EXCLUDED.depends_on,
+                        status     = 'pending'
+                    """,
+                    (
+                        run_id,
+                        step["step_order"],
+                        step["step_name"],
+                        step["agent"],
+                        json.dumps(step.get("params", {})),
+                        step.get("depends_on", []),
+                    ),
+                )
+
+
+def get_plan(run_id: str) -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM run_plan
+                WHERE run_id=%s
+                ORDER BY step_order
+                """,
+                (run_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def update_plan_step(
+    run_id: str,
+    step_name: str,
+    status: str,
+    result_summary: str | None = None,
+    error: str | None = None,
+) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if status == "running":
+                cur.execute(
+                    """
+                    UPDATE run_plan
+                    SET status=%s, started_at=NOW()
+                    WHERE run_id=%s AND step_name=%s
+                    """,
+                    (status, run_id, step_name),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE run_plan
+                    SET status=%s, result_summary=%s, error=%s, completed_at=NOW()
+                    WHERE run_id=%s AND step_name=%s
+                    """,
+                    (status, result_summary, error, run_id, step_name),
+                )
+
+
+# ── EXPLORER: RUN PLAN ───────────────────
+
+
+def list_run_plan(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    return _list_table("run_plan", limit, offset)
+
+
+def get_run_plan_by_id(plan_id: int) -> dict[str, Any] | None:
+    return _get_by_id("run_plan", plan_id)

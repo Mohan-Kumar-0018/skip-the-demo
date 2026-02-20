@@ -10,6 +10,7 @@ from db.models import (
     get_run_figma_data_by_id,
     get_run_browser_data_by_id,
     get_run_token_usage_by_id,
+    get_run_plan_by_id,
     list_runs,
     list_run_steps,
     list_run_results,
@@ -17,6 +18,7 @@ from db.models import (
     list_run_figma_data,
     list_run_browser_data,
     list_run_token_usage,
+    list_run_plan,
 )
 
 router = APIRouter(prefix="/api/explorer", tags=["explorer"])
@@ -152,4 +154,23 @@ def api_get_run_token_usage(usage_id: int):
     row = get_run_token_usage_by_id(usage_id)
     if not row:
         raise HTTPException(status_code=404, detail="Token usage record not found")
+    return row
+
+
+# ── Run Plan ────────────────────────────
+
+
+@router.get("/run-plan")
+def api_list_run_plan(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    return list_run_plan(limit, offset)
+
+
+@router.get("/run-plan/{plan_id}")
+def api_get_run_plan(plan_id: int):
+    row = get_run_plan_by_id(plan_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Plan step not found")
     return row
