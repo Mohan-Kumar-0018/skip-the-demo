@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 ACTIVATE := cd backend && source ../venv/bin/activate
-DB_URL   := postgresql://postgres:skipdemo@localhost:5432/skipdemo
+DB_URL   := postgresql://localhost:5432/skipdemo
 
 # ─── Agentic agents (plain text prompt) ──────────────────────
 
