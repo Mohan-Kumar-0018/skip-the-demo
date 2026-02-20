@@ -4,6 +4,12 @@
       "url": "https://customer.silqfi.xyz",
       "phone": "966519002314",
       "password": "6666"
+    },
+    "fina-merchant-panel": {
+      "url": "https://merchant-fina.silqfi.xyz",
+      "phone": "966567127230",
+      "password": "6666"
     }
+
   }
 }

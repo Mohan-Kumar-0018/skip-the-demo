@@ -40,7 +40,7 @@ async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
         page = _sessions[job_id]["page"]
 
     await page.goto(url, wait_until="networkidle")
-    await page.wait_for_timeout(1500)  # let app (e.g. Flutter) settle
+    await page.wait_for_timeout(500)  # let app (e.g. Flutter) settle
     title = await page.title()
     meta_desc = await page.evaluate(
         "() => document.querySelector('meta[name=\"description\"]')?.content || ''"
@@ -70,9 +70,9 @@ async def type_text(selector: str, text: str, job_id: str) -> dict[str, str]:
     try:
         await target.scroll_into_view_if_needed()
         await target.click()
-        await page.wait_for_timeout(500)  # let Flutter assign focus before typing
+        await page.wait_for_timeout(200)  # let Flutter assign focus before typing
         await target.focus()
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(100)
         # Try fill() on real input/textarea; otherwise type via keyboard (Flutter canvas/custom)
         tag = await target.evaluate("el => (el.tagName && el.tagName.toLowerCase()) || ''")
         if tag in ("input", "textarea"):
@@ -81,7 +81,7 @@ async def type_text(selector: str, text: str, job_id: str) -> dict[str, str]:
         else:
             # Flutter/custom widget: focus is on the element, type with delay so OTP box receives keys
             await page.keyboard.type(text, delay=120)
-        await page.wait_for_timeout(800)  # allow UI to update after typing
+        await page.wait_for_timeout(300)  # allow UI to update after typing
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": f"Typed '{text}' into {selector}"}
@@ -93,7 +93,7 @@ async def press_key(key: str, job_id: str) -> dict[str, str]:
     page: Page = session["page"]
     try:
         await page.keyboard.press(key)
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(200)
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": f"Pressed {key}"}
@@ -109,8 +109,8 @@ async def click_element(selector: str, job_id: str) -> dict[str, str]:
     try:
         await el.scroll_into_view_if_needed()
         await el.click()
-        await page.wait_for_timeout(1200)  # allow navigation/UI update (e.g. Flutter)
-        await page.wait_for_load_state("networkidle")
+        await page.wait_for_timeout(400)  # allow navigation/UI update (e.g. Flutter)
+        await page.wait_for_load_state("domcontentloaded")
     except Exception as e:
         return {"status": "error", "message": str(e)}
     title = await page.title()
@@ -142,9 +142,9 @@ async def click_by_text(text: str, job_id: str, exact: bool = False) -> dict[str
         target = locator.first
         await target.scroll_into_view_if_needed()
         await target.click()
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(500)
         try:
-            await page.wait_for_load_state("networkidle", timeout=5000)
+            await page.wait_for_load_state("domcontentloaded", timeout=3000)
         except Exception:
             pass  # Flutter apps may not trigger network activity
         title = await page.title()
@@ -160,7 +160,7 @@ async def scroll_page(direction: str, amount: int, job_id: str) -> dict[str, str
     try:
         delta_y = amount if direction == "down" else -amount
         await page.mouse.wheel(0, delta_y)
-        await page.wait_for_timeout(800)
+        await page.wait_for_timeout(300)
     except Exception as e:
         return {"status": "error", "message": str(e)}
     return {"status": "ok", "message": f"Scrolled {direction} by {amount}px"}
@@ -269,7 +269,7 @@ async def start_recording(job_id: str) -> dict[str, str]:
     )
     new_page: Page = await new_context.new_page()
     await new_page.goto(current_url, wait_until="networkidle")
-    await new_page.wait_for_timeout(1500)
+    await new_page.wait_for_timeout(500)
 
     # 4. Update session references
     session["context"] = new_context

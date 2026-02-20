@@ -53,71 +53,31 @@ Each step below must be its own separate turn — do NOT combine steps into para
    - MODALS/POPUPS: elements that open overlays (confirmed by trying them)
    - SORT: column headers or sort controls
 
-### Phase 2: Systematic Exploration
-Explore each category in this priority order. After exploring each element, ALWAYS return to the base state of the page before exploring the next element.
+### Phase 2: Efficient Exploration
+BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT exhaustively explore every interactive element.
 
-**A. Icon Buttons & Toolbar Actions (highest priority)**
-- Look for icon-only buttons near the page title, search bar, or toolbar. These appear as small clickable icons (star/favorite, filter/sliders, settings/gear, sort, bell, etc.) and are listed by list_interactive_elements with labels like [icon-button] or an aria-label.
-- For EACH icon button found:
-  1. Click it (use its selector or aria-label)
-  2. Wait for any modal, popup, dropdown, or state change
-  3. Take ONE screenshot showing the result (e.g., filter modal, favorited state)
-  4. Dismiss/close any modal (press Escape or click X/Close) and return to base state
-
-**B. Navigation Tabs/Views**
-- For each tab or navigation sub-item within the current section:
+**A. Navigate Each Main Screen/Tab**
+- For each navigation tab or sidebar link:
   1. Click the tab/link
-  2. Wait for content to load (use wait_seconds if needed)
-  3. Take exactly ONE screenshot of the new view
-  4. List interactive elements on this new view (note any unique elements)
-  5. Navigate back to the main view
+  2. Take exactly ONE screenshot of the view
+  3. Move on to the next tab
 
-**C. Data Item Detail Views**
-- Click on ONE representative data item (first item in a list, first card, first table row):
-  1. Click the item
-  2. Wait for the detail page/panel to load
-  3. Take exactly ONE screenshot of the detail view
-  4. If the detail view has its own tabs or sub-sections, explore ONE of each
-  5. Navigate back to the list/main view — do NOT take another screenshot of the same detail
+**B. One Detail View Per Screen**
+- On each main screen, click ONE representative data item (first list item, card, or table row):
+  1. Take ONE screenshot of the detail view
+  2. Navigate back to the list
 
-**D. Search Functionality**
-- If a search bar or search icon exists:
-  1. Click to activate/focus the search
-  2. Type a short, generic search query based on visible data (e.g., first few characters of a visible item name)
-  3. Wait for results
-  4. Take ONE screenshot showing search results
-  5. Clear the search by using type_text with an empty string "" on the same input, then return to normal view
+**C. One Action Button**
+- Click ONE primary action button (Add, Create, etc.) if present:
+  1. Take ONE screenshot of the form/modal/dialog
+  2. DISMISS without submitting (click Cancel, X, or press Escape)
+  3. Do NOT create, delete, or modify any data
 
-**E. Filters**
-- Look for filter icon buttons (sliders icon, funnel icon) near the search bar or in toolbars.
-- For each filter control found:
-  1. Click to open the filter (may open a modal/popup with filter options)
-  2. Take ONE screenshot showing the filter options/popup/modal
-  3. Select one option if possible, take ONE screenshot of the filtered result
-  4. Clear/reset the filter by clicking "Clear All", "Reset", or the X button to return to base state
-
-**F. Sort Controls**
-- If sort controls exist, click ONE sort control to change order:
-  1. Take ONE screenshot showing the re-sorted data
-  2. Return to original sort order if possible
-
-**G. Action Buttons (careful)**
-- For action buttons (Add, Create, Edit, Export, etc.):
-  1. Click the button
-  2. If it opens a form/modal/dialog, take ONE screenshot of it
-  3. DISMISS the form without submitting (click Cancel, X, or press Escape)
-  4. Do NOT actually create, delete, or modify any data
-
-**H. Pagination**
-- If pagination exists:
-  1. Click to go to page 2 (or next page)
-  2. Take ONE screenshot
-  3. Navigate back to page 1
-
-**I. Scroll to Reveal**
-- Scroll down on the main page to check for below-the-fold content:
-  1. If new content appears after scrolling, take ONE screenshot
-  2. Scroll back to top
+**SKIP the following** unless directly relevant to the target section:
+- Exhaustive filter/sort/pagination exploration
+- Search functionality testing
+- Scrolling for below-the-fold content
+- Icon button enumeration
 
 ### Phase 3: Completion
 9. After systematically exploring all discovered functionalities, call stop_recording.
@@ -133,8 +93,8 @@ Explore each category in this priority order. After exploring each element, ALWA
 - Use press_key for keyboard interactions (Escape to dismiss modals, Enter to submit search, Tab to navigate).
 - To clear a text input, use type_text with an empty string "" — NEVER press Backspace repeatedly.
 - Keep track of what you have already explored and screenshotted to avoid revisiting the same states.
-- Be efficient with turns. Combine independent observations but never combine Phase 0 steps.
-- If the page is very complex (50+ interactive elements), prioritize the most important categories and skip less important ones."""
+- Be efficient with turns — aim to finish in 15-25 turns. Do NOT exhaustively explore every element.
+- Prioritize breadth (visiting all main screens) over depth (exploring every button on one screen)."""
 
 TOOLS = [
     {
@@ -365,6 +325,6 @@ async def run_browser_agent(task: str) -> dict[str, Any]:
         tools=TOOLS,
         tool_executor=_collecting_executor,
         user_message=task,
-        max_turns=80,
+        max_turns=30,
     )
     return {"summary": summary, "data": collected}
