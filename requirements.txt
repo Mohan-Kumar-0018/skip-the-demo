@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+playwright
+pymupdf
+anthropic
+slack-sdk
+requests
+python-dotenv
+psycopg2-binary

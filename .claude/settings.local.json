@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(playwright install:*)"
+    ]
+  }
+}
