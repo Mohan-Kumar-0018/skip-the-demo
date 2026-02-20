@@ -42,6 +42,7 @@ async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
         page = _sessions[job_id]["page"]
 
     await page.goto(url, wait_until="networkidle")
+    await page.wait_for_timeout(1500)  # let app (e.g. Flutter) settle
     title = await page.title()
     meta_desc = await page.evaluate(
         "() => document.querySelector('meta[name=\"description\"]')?.content || ''"
@@ -58,6 +59,48 @@ async def take_screenshot(job_id: str) -> dict[str, str]:
     return {"path": path}
 
 
+async def type_text(selector: str, text: str, job_id: str) -> dict[str, str]:
+    """Type text into an input field identified by CSS selector. For Flutter/OTP fields: focuses, waits, then types."""
+    session = await _get_session(job_id)
+    page: Page = session["page"]
+    el = await page.query_selector(selector)
+    if not el:
+        return {"status": "error", "message": f"Element not found: {selector}"}
+    # Flutter often wraps the real input: prefer nested input/textarea for fill()
+    input_el = await el.query_selector("input, textarea")
+    target = input_el if input_el else el
+    try:
+        await target.scroll_into_view_if_needed()
+        await target.click()
+        await page.wait_for_timeout(500)  # let Flutter assign focus before typing
+        await target.focus()
+        await page.wait_for_timeout(300)
+        # Try fill() on real input/textarea; otherwise type via keyboard (Flutter canvas/custom)
+        tag = await target.evaluate("el => (el.tagName && el.tagName.toLowerCase()) || ''")
+        if tag in ("input", "textarea"):
+            await target.fill("")
+            await target.fill(text)
+        else:
+            # Flutter/custom widget: focus is on the element, type with delay so OTP box receives keys
+            await page.keyboard.type(text, delay=120)
+        await page.wait_for_timeout(800)  # allow UI to update after typing
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "message": f"Typed '{text}' into {selector}"}
+
+
+async def press_key(key: str, job_id: str) -> dict[str, str]:
+    """Press a keyboard key (e.g. Enter, Tab, Backspace, ArrowDown)."""
+    session = await _get_session(job_id)
+    page: Page = session["page"]
+    try:
+        await page.keyboard.press(key)
+        await page.wait_for_timeout(500)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "message": f"Pressed {key}"}
+
+
 async def click_element(selector: str, job_id: str) -> dict[str, str]:
     """Click an element by CSS selector. Returns new page state after click."""
     session = await _get_session(job_id)
@@ -68,6 +111,7 @@ async def click_element(selector: str, job_id: str) -> dict[str, str]:
     try:
         await el.scroll_into_view_if_needed()
         await el.click()
+        await page.wait_for_timeout(1200)  # allow navigation/UI update (e.g. Flutter)
         await page.wait_for_load_state("networkidle")
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -80,7 +124,7 @@ async def list_interactive_elements(job_id: str) -> list[dict[str, str]]:
     session = await _get_session(job_id)
     page: Page = session["page"]
     elements = await page.evaluate("""() => {
-        const selectors = ['button', 'a[href]', 'input[type=submit]', '[role=button]', '[role=tab]', '[role=link]'];
+        const selectors = ['button', 'a[href]', 'input', 'textarea', 'select', 'input[type=submit]', '[role=button]', '[role=tab]', '[role=link]', '[role=textbox]'];
         const results = [];
         for (const sel of selectors) {
             for (const el of document.querySelectorAll(sel)) {
@@ -98,6 +142,14 @@ async def list_interactive_elements(job_id: str) -> list[dict[str, str]]:
         return results.slice(0, 30);
     }""")
     return elements
+
+
+async def wait_seconds(seconds: float, job_id: str) -> dict[str, str]:
+    """Wait for a number of seconds. Use after navigation or click to let the page load (e.g. OTP screen)."""
+    session = await _get_session(job_id)
+    sec = max(0, min(10, float(seconds)))
+    await session["page"].wait_for_timeout(int(sec * 1000))
+    return {"status": "ok", "message": f"Waited {sec}s"}
 
 
 async def get_page_content(job_id: str) -> dict[str, str]:

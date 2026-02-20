@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from db.models import create_run, get_all_runs, get_results, get_run, get_steps
-from orchestrator import run_pipeline
+from orchestrator import run_browser_pipeline, run_pipeline
 
 app = FastAPI(title="SkipTheDemo API")
 
@@ -37,11 +37,23 @@ class RunRequest(BaseModel):
     ticket_id: str
 
 
+class BrowserRunRequest(BaseModel):
+    kb_key: str  # e.g. "fina-customer-panel"
+
+
 class RunResponse(BaseModel):
     job_id: str
 
 
 # ── Routes ────────────────────────────────
+
+
+@app.post("/run-browser", response_model=RunResponse)
+async def trigger_browser_run(body: BrowserRunRequest):
+    job_id = uuid.uuid4().hex[:8]
+    create_run(job_id, body.kb_key)
+    asyncio.create_task(run_browser_pipeline(job_id, body.kb_key))
+    return RunResponse(job_id=job_id)
 
 
 @app.post("/run", response_model=RunResponse)

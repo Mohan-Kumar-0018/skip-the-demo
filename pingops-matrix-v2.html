@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PingOps</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* Star field canvas */
+  #starfield {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 0;
+  }
+
+  /* Matrix rain canvas - subtle */
+  #matrix-rain {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    opacity: 0.15;
+  }
+
+  .container {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 50px;
+  }
+
+  /* ══════════════════════════════════════
+     ORBIT SYSTEM - Space style
+     ══════════════════════════════════════ */
+  .solar-system {
+    position: relative;
+    width: 500px;
+    height: 500px;
+    opacity: 0;
+    animation: systemFadeIn 3s ease-out 0.5s forwards;
+  }
+
+  /* Orbit rings */
+  .orbit {
+    position: absolute;
+    border: 1px solid rgba(0, 255, 65, 0.08);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    animation: orbitPulse 4s ease-in-out infinite;
+  }
+
+  .orbit-1 {
+    width: 300px; height: 300px;
+    margin: -150px 0 0 -150px;
+  }
+
+  .orbit-2 {
+    width: 420px; height: 420px;
+    margin: -210px 0 0 -210px;
+    border-style: dashed;
+    animation-delay: 1s;
+  }
+
+  .orbit-3 {
+    width: 180px; height: 180px;
+    margin: -90px 0 0 -90px;
+    border-color: rgba(0, 255, 65, 0.05);
+    animation-delay: 2s;
+  }
+
+  /* Center - PingOps */
+  .center-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 20;
+  }
+
+  .pingops-text {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 42px;
+    color: #00ff41;
+    letter-spacing: 8px;
+    text-shadow:
+      0 0 20px #00ff41,
+      0 0 40px #00ff41,
+      0 0 80px rgba(0, 255, 65, 0.5),
+      0 0 120px rgba(0, 255, 65, 0.3);
+    animation: centerPulse 4s ease-in-out infinite, textReveal 2s ease-out 1s forwards;
+    opacity: 0;
+  }
+
+  .pingops-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 12px;
+    color: rgba(0, 255, 65, 0.4);
+    margin-top: 10px;
+    opacity: 0;
+    animation: fadeIn 2s ease-out 2.5s forwards;
+  }
+
+  /* ══════════════════════════════════════
+     ORBITING ICONS - Circular motion
+     ══════════════════════════════════════ */
+
+  /* Outer orbit icons */
+  .icon-orbiter {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+  }
+
+  .icon-orbiter-outer {
+    animation: orbitSpin 12s linear infinite;
+  }
+
+  .icon-orbiter-inner {
+    animation: orbitSpin 8s linear infinite reverse;
+  }
+
+  .orbit-icon {
+    position: absolute;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 10, 2, 0.95);
+    border: 1.5px solid rgba(0, 255, 65, 0.6);
+    box-shadow:
+      0 0 15px rgba(0, 255, 65, 0.2),
+      0 0 30px rgba(0, 255, 65, 0.1),
+      inset 0 0 10px rgba(0, 255, 65, 0.05);
+    transition: all 0.3s;
+  }
+
+  .orbit-icon:hover {
+    border-color: #00ff41;
+    box-shadow:
+      0 0 25px rgba(0, 255, 65, 0.5),
+      0 0 50px rgba(0, 255, 65, 0.2),
+      inset 0 0 15px rgba(0, 255, 65, 0.1);
+    transform: scale(1.15);
+  }
+
+  .orbit-icon svg {
+    width: 24px;
+    height: 24px;
+    fill: #00ff41;
+    filter: drop-shadow(0 0 4px #00ff41);
+  }
+
+  /* Counter-rotate icons so they stay upright */
+  .icon-orbiter-outer .orbit-icon {
+    animation: counterSpin 12s linear infinite;
+  }
+
+  .icon-orbiter-inner .orbit-icon {
+    animation: counterSpin 8s linear infinite reverse;
+  }
+
+  .icon-label {
+    position: absolute;
+    bottom: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: rgba(0, 255, 65, 0.6);
+    white-space: nowrap;
+    text-transform: uppercase;
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* Position icons on their orbits */
+  .pos-top { top: -150px; left: -26px; }
+  .pos-right { top: -26px; left: 150px - 26px; left: 124px; }
+  .pos-bottom { top: 124px; left: -26px; }
+  .pos-left { top: -26px; left: -176px; }
+
+  .pos-inner-1 { top: -116px; left: -26px; }
+  .pos-inner-2 { top: -26px; left: 90px; }
+
+  /* ══════════════════════════════════════
+     NEO QUOTE + COMING SOON
+     ══════════════════════════════════════ */
+  .bottom-text {
+    text-align: center;
+    opacity: 0;
+    animation: fadeIn 2s ease-out 4s forwards;
+  }
+
+  .neo-line {
+    font-size: 13px;
+    color: rgba(0, 255, 65, 0.6);
+    letter-spacing: 3px;
+    margin-bottom: 30px;
+    font-style: italic;
+  }
+
+  .coming-soon {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 12px;
+    text-transform: uppercase;
+    color: #00ff41;
+    text-shadow: 0 0 20px rgba(0, 255, 65, 0.4);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .coming-soon::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 255, 65, 0.15), transparent);
+    animation: sweepShine 3s linear infinite;
+  }
+
+  /* Scanning line effect */
+  .scan-line {
+    position: fixed;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(0, 255, 65, 0.1), transparent);
+    z-index: 3;
+    animation: scanDown 8s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Subtle vignette */
+  .vignette {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 2;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.7) 100%);
+  }
+
+  /* Green ambient glow at center */
+  .ambient-glow {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 255, 65, 0.03) 0%, transparent 70%);
+    z-index: 1;
+    animation: glowPulse 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  /* Audio button */
+  .audio-btn {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    z-index: 30;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(0, 255, 65, 0.4);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+  }
+
+  .audio-btn:hover {
+    border-color: #00ff41;
+    box-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
+  }
+
+  .audio-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+  }
+
+  .audio-bars .bar {
+    width: 2.5px;
+    background: #00ff41;
+    border-radius: 1px;
+    height: 3px;
+    transition: 0.2s;
+  }
+
+  .audio-bars.on .bar:nth-child(1) { animation: bar 0.45s ease-in-out infinite 0s; }
+  .audio-bars.on .bar:nth-child(2) { animation: bar 0.45s ease-in-out infinite 0.08s; }
+  .audio-bars.on .bar:nth-child(3) { animation: bar 0.45s ease-in-out infinite 0.16s; }
+  .audio-bars.on .bar:nth-child(4) { animation: bar 0.45s ease-in-out infinite 0.24s; }
+  .audio-bars.on .bar:nth-child(5) { animation: bar 0.45s ease-in-out infinite 0.32s; }
+
+  /* ══════════════════════════════════════
+     KEYFRAMES
+     ══════════════════════════════════════ */
+  @keyframes systemFadeIn {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  @keyframes textReveal {
+    0% { opacity: 0; letter-spacing: 30px; filter: blur(8px); }
+    100% { opacity: 1; letter-spacing: 8px; filter: blur(0); }
+  }
+
+  @keyframes centerPulse {
+    0%, 100% {
+      text-shadow: 0 0 20px #00ff41, 0 0 40px #00ff41, 0 0 80px rgba(0,255,65,0.5);
+    }
+    50% {
+      text-shadow: 0 0 30px #00ff41, 0 0 60px #00ff41, 0 0 120px rgba(0,255,65,0.6), 0 0 200px rgba(0,255,65,0.2);
+    }
+  }
+
+  @keyframes orbitSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes counterSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+  }
+
+  @keyframes orbitPulse {
+    0%, 100% { border-color: rgba(0, 255, 65, 0.08); }
+    50% { border-color: rgba(0, 255, 65, 0.15); }
+  }
+
+  @keyframes fadeIn {
+    to { opacity: 1; }
+  }
+
+  @keyframes sweepShine {
+    from { left: -100%; }
+    to { left: 200%; }
+  }
+
+  @keyframes scanDown {
+    from { top: -2px; }
+    to { top: 100vh; }
+  }
+
+  @keyframes glowPulse {
+    0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+    50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  }
+
+  @keyframes bar {
+    0%, 100% { height: 3px; }
+    50% { height: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="starfield"></canvas>
+<canvas id="matrix-rain"></canvas>
+<div class="vignette"></div>
+<div class="ambient-glow"></div>
+<div class="scan-line"></div>
+
+<div class="container">
+  <!-- Solar System Orbit -->
+  <div class="solar-system">
+    <div class="orbit orbit-3"></div>
+    <div class="orbit orbit-1"></div>
+    <div class="orbit orbit-2"></div>
+
+    <!-- Center text -->
+    <div class="center-text">
+      <div class="pingops-text">PINGOPS</div>
+      <div class="pingops-sub">UNIFIED · MESSAGING · AGENT</div>
+    </div>
+
+    <!-- Outer orbit: 4 icons -->
+    <div class="icon-orbiter icon-orbiter-outer">
+      <!-- Google Chat - Top -->
+      <div class="orbit-icon pos-top">
+        <svg viewBox="0 0 24 24"><path d="M12 0C5.372 0 0 4.975 0 11.111c0 3.497 1.745 6.616 4.472 8.652V24l4.086-2.242c1.09.301 2.246.464 3.442.464 6.628 0 12-4.975 12-11.111S18.628 0 12 0zm1.193 14.963l-3.056-3.259-5.963 3.259L10.733 8.2l3.13 3.259L19.752 8.2l-6.559 6.763z"/></svg>
+        <span class="icon-label">GChat</span>
+      </div>
+
+      <!-- Gmail - Right -->
+      <div class="orbit-icon" style="top:-26px;left:124px;">
+        <svg viewBox="0 0 24 24"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 010 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"/></svg>
+        <span class="icon-label">Gmail</span>
+      </div>
+
+      <!-- Slack - Bottom -->
+      <div class="orbit-icon" style="top:124px;left:-26px;">
+        <svg viewBox="0 0 24 24"><path d="M5.042 15.165a2.528 2.528 0 01-2.52 2.523A2.528 2.528 0 010 15.165a2.527 2.527 0 012.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 012.521-2.52 2.527 2.527 0 012.521 2.52v6.313A2.528 2.528 0 018.834 24a2.528 2.528 0 01-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 01-2.521-2.52A2.528 2.528 0 018.834 0a2.528 2.528 0 012.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 012.521 2.521 2.528 2.528 0 01-2.521 2.521H2.522A2.528 2.528 0 010 8.834a2.528 2.528 0 012.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 012.522-2.521A2.528 2.528 0 0124 8.834a2.528 2.528 0 01-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 01-2.523 2.521 2.527 2.527 0 01-2.52-2.521V2.522A2.527 2.527 0 0115.165 0a2.528 2.528 0 012.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 012.523 2.522A2.528 2.528 0 0115.165 24a2.527 2.527 0 01-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 01-2.52-2.523 2.526 2.526 0 012.52-2.52h6.313A2.527 2.527 0 0124 15.165a2.528 2.528 0 01-2.522 2.523h-6.313z"/></svg>
+        <span class="icon-label">Slack</span>
+      </div>
+
+      <!-- AI - Left -->
+      <div class="orbit-icon" style="top:-26px;left:-176px;">
+        <svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1.27c.34-.6.99-1 1.73-1a2 2 0 110 4c-.74 0-1.39-.4-1.73-1H21a7 7 0 01-7 7v1.27c.6.34 1 .99 1 1.73a2 2 0 11-4 0c0-.74.4-1.39 1-1.73V23a7 7 0 01-7-7H3.73c-.34.6-.99 1-1.73 1a2 2 0 110-4c.74 0 1.39.4 1.73 1H5a7 7 0 017-7V5.73C11.4 5.39 11 4.74 11 4a2 2 0 012-2m0 7a5 5 0 00-5 5 5 5 0 005 5 5 5 0 005-5 5 5 0 00-5-5m0 2a3 3 0 013 3 3 3 0 01-3 3 3 3 0 01-3-3 3 3 0 013-3z"/></svg>
+        <span class="icon-label">AI</span>
+      </div>
+    </div>
+
+    <!-- Inner orbit: 2 icons (Google + Email) -->
+    <div class="icon-orbiter icon-orbiter-inner">
+      <div class="orbit-icon" style="top:-116px;left:-26px;">
+        <svg viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        <span class="icon-label">Google</span>
+      </div>
+
+      <div class="orbit-icon" style="top:-26px;left:64px;">
+        <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+        <span class="icon-label">Email</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom -->
+  <div class="bottom-text">
+    <div class="neo-line">"There is no spoon." — Neo</div>
+    <div class="coming-soon">UPDATES COMING SOON</div>
+  </div>
+</div>
+
+<!-- Audio button -->
+<button class="audio-btn" id="audioBtn" onclick="toggleAudio()">
+  <div class="audio-bars" id="bars">
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+    <div class="bar"></div>
+  </div>
+</button>
+
+<script>
+// ═══════════════════════════════════════════
+// STAR FIELD - Deep space background
+// ═══════════════════════════════════════════
+const stars = document.getElementById('starfield');
+const sctx = stars.getContext('2d');
+stars.width = window.innerWidth;
+stars.height = window.innerHeight;
+
+const starArr = [];
+for (let i = 0; i < 400; i++) {
+  starArr.push({
+    x: Math.random() * stars.width,
+    y: Math.random() * stars.height,
+    r: Math.random() * 1.5,
+    speed: 0.02 + Math.random() * 0.08,
+    alpha: Math.random(),
+    dir: Math.random() > 0.5 ? 1 : -1
+  });
+}
+
+function drawStars() {
+  sctx.clearRect(0, 0, stars.width, stars.height);
+  starArr.forEach(s => {
+    s.alpha += s.speed * s.dir;
+    if (s.alpha >= 1) { s.dir = -1; s.alpha = 1; }
+    if (s.alpha <= 0.1) { s.dir = 1; s.alpha = 0.1; }
+
+    sctx.beginPath();
+    sctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    sctx.fillStyle = `rgba(0, 255, 65, ${s.alpha * 0.6})`;
+    sctx.fill();
+
+    // Subtle glow for bigger stars
+    if (s.r > 1) {
+      sctx.beginPath();
+      sctx.arc(s.x, s.y, s.r * 3, 0, Math.PI * 2);
+      sctx.fillStyle = `rgba(0, 255, 65, ${s.alpha * 0.05})`;
+      sctx.fill();
+    }
+  });
+  requestAnimationFrame(drawStars);
+}
+drawStars();
+
+// ═══════════════════════════════════════════
+// MATRIX RAIN - Subtle background
+// ═══════════════════════════════════════════
+const mc = document.getElementById('matrix-rain');
+const mctx = mc.getContext('2d');
+mc.width = window.innerWidth;
+mc.height = window.innerHeight;
+
+const chars = 'アイウエオカキクケコサシスセソタチツテト01PINGOPS';
+const fontSize = 12;
+const cols = Math.floor(mc.width / fontSize);
+const drops = Array(cols).fill(1);
+
+function drawRain() {
+  mctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+  mctx.fillRect(0, 0, mc.width, mc.height);
+  mctx.fillStyle = '#00ff41';
+  mctx.font = fontSize + 'px monospace';
+
+  for (let i = 0; i < drops.length; i++) {
+    const ch = chars[Math.floor(Math.random() * chars.length)];
+    mctx.fillText(ch, i * fontSize, drops[i] * fontSize);
+    if (drops[i] * fontSize > mc.height && Math.random() > 0.98) drops[i] = 0;
+    drops[i]++;
+  }
+}
+setInterval(drawRain, 60);
+
+// ═══════════════════════════════════════════
+// RESIZE
+// ═══════════════════════════════════════════
+window.addEventListener('resize', () => {
+  stars.width = mc.width = window.innerWidth;
+  stars.height = mc.height = window.innerHeight;
+});
+
+// ═══════════════════════════════════════════
+// AUDIO - Dark cinematic Matrix BGM
+// ═══════════════════════════════════════════
+let actx = null, playing = false;
+
+function createAudio() {
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  const master = actx.createGain();
+  master.gain.value = 0.25;
+  master.connect(actx.destination);
+
+  // Reverb convolver (synthetic impulse)
+  const convolver = actx.createConvolver();
+  const rate = actx.sampleRate;
+  const len = rate * 3;
+  const impulse = actx.createBuffer(2, len, rate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = impulse.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    }
+  }
+  convolver.buffer = impulse;
+  const reverbGain = actx.createGain();
+  reverbGain.gain.value = 0.3;
+  convolver.connect(reverbGain);
+  reverbGain.connect(master);
+
+  // Deep sub bass
+  const sub = actx.createOscillator();
+  const subG = actx.createGain();
+  sub.type = 'sine';
+  sub.frequency.value = 32;
+  subG.gain.value = 0.2;
+  sub.connect(subG);
+  subG.connect(master);
+  sub.start();
+
+  // Dark pad chord - C minor feel
+  const padNotes = [65.41, 77.78, 98.0]; // C2, Eb2, G2
+  padNotes.forEach((freq, idx) => {
+    const osc = actx.createOscillator();
+    const g = actx.createGain();
+    const f = actx.createBiquadFilter();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    f.type = 'lowpass';
+    f.frequency.value = 300;
+    f.Q.value = 2;
+    g.gain.value = 0.04;
+    osc.connect(f);
+    f.connect(g);
+    g.connect(master);
+    g.connect(convolver);
+    osc.start();
+
+    // Slow wobble
+    const lfo = actx.createOscillator();
+    const lfoG = actx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.08 + idx * 0.02;
+    lfoG.gain.value = 100 + idx * 30;
+    lfo.connect(lfoG);
+    lfoG.connect(f.frequency);
+    lfo.start();
+  });
+
+  // High eerie tone
+  const high = actx.createOscillator();
+  const hG = actx.createGain();
+  const hF = actx.createBiquadFilter();
+  high.type = 'sine';
+  high.frequency.value = 523.25; // C5
+  hF.type = 'lowpass';
+  hF.frequency.value = 800;
+  hG.gain.value = 0.015;
+  high.connect(hF);
+  hF.connect(hG);
+  hG.connect(master);
+  hG.connect(convolver);
+  high.start();
+
+  // Pitch drift
+  const drift = actx.createOscillator();
+  const dG = actx.createGain();
+  drift.type = 'sine';
+  drift.frequency.value = 0.03;
+  dG.gain.value = 15;
+  drift.connect(dG);
+  dG.connect(high.frequency);
+  drift.start();
+
+  // Heartbeat-like kick
+  function heartbeat() {
+    if (!playing) return;
+    const kick = actx.createOscillator();
+    const kG = actx.createGain();
+    kick.type = 'sine';
+    kick.frequency.setValueAtTime(60, actx.currentTime);
+    kick.frequency.exponentialRampToValueAtTime(20, actx.currentTime + 0.3);
+    kG.gain.setValueAtTime(0.15, actx.currentTime);
+    kG.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.5);
+    kick.connect(kG);
+    kG.connect(master);
+    kick.start(actx.currentTime);
+    kick.stop(actx.currentTime + 0.5);
+
+    // Second beat (softer)
+    setTimeout(() => {
+      if (!playing) return;
+      const k2 = actx.createOscillator();
+      const k2G = actx.createGain();
+      k2.type = 'sine';
+      k2.frequency.setValueAtTime(55, actx.currentTime);
+      k2.frequency.exponentialRampToValueAtTime(18, actx.currentTime + 0.2);
+      k2G.gain.setValueAtTime(0.08, actx.currentTime);
+      k2G.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.3);
+      k2.connect(k2G);
+      k2G.connect(master);
+      k2.start(actx.currentTime);
+      k2.stop(actx.currentTime + 0.3);
+    }, 350);
+
+    setTimeout(heartbeat, 2400);
+  }
+  heartbeat();
+
+  // Random metallic pings
+  function ping() {
+    if (!playing) return;
+    const p = actx.createOscillator();
+    const pG = actx.createGain();
+    const pF = actx.createBiquadFilter();
+    p.type = 'triangle';
+    p.frequency.value = 800 + Math.random() * 3000;
+    pF.type = 'bandpass';
+    pF.frequency.value = p.frequency.value;
+    pF.Q.value = 30;
+    pG.gain.setValueAtTime(0.03, actx.currentTime);
+    pG.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.4);
+    p.connect(pF);
+    pF.connect(pG);
+    pG.connect(convolver);
+    p.start();
+    p.stop(actx.currentTime + 0.4);
+    setTimeout(ping, 1500 + Math.random() * 4000);
+  }
+  setTimeout(ping, 2000);
+}
+
+function toggleAudio() {
+  const b = document.getElementById('bars');
+  if (!playing) {
+    if (!actx) createAudio();
+    else actx.resume();
+    playing = true;
+    b.classList.add('on');
+  } else {
+    actx.suspend();
+    playing = false;
+    b.classList.remove('on');
+  }
+}
+</script>
+
+</body>
+</html>
