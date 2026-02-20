@@ -33,10 +33,12 @@ from db.models import (
 from orchestrator import run_browser_pipeline, run_pipeline
 from routers.dashboard import router as dashboard_router
 from routers.explorer import router as explorer_router
+from routers.runs import router as runs_router
 
 app = FastAPI(title="SkipTheDemo API")
 app.include_router(dashboard_router)
 app.include_router(explorer_router)
+app.include_router(runs_router)
 
 app.add_middleware(
     CORSMiddleware,
