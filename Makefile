@@ -14,6 +14,11 @@ test-jira:
 test-browser:
 	$(ACTIVATE) && python test_agent.py browser "$(PROMPT)"
 
+## Browser Agent (auto-discovery) — explore a specific page using KB credentials
+## Example: make test-browser-page KB_KEY=fina-customer-panel PAGE=Suppliers
+test-browser-page:
+	$(ACTIVATE) && KB_KEY="$(KB_KEY)" PAGE="$(PAGE)" python test_agent.py browser "auto"
+
 ## Slack Agent — post messages, upload files to Slack
 ## Example: make test-slack PROMPT="Post a message to #skipdemo-pm saying: Hello from SkipTheDemo test run!"
 test-slack:
@@ -52,6 +57,7 @@ help:
 	@echo ""
 	@echo "  make test-jira       PROMPT=\"...\"                       Jira agent (tickets, subtasks, attachments)"
 	@echo "  make test-browser    PROMPT=\"...\"                       Browser agent (crawl, screenshot, record)"
+	@echo "  make test-browser-page KB_KEY=... PAGE=...              Browser auto-discovery (KB credentials)"
 	@echo "  make test-slack      PROMPT=\"...\"                       Slack agent (post messages, upload files)"
 	@echo "  make test-vision     DESIGN=... SCREENSHOT=... PROMPT=  Vision agent (design vs screenshot)"
 	@echo "  make test-figma      PROMPT=\"...\"                       Figma agent (extract design images)"

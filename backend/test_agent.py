@@ -40,6 +40,57 @@ async def main():
     elif agent == "browser":
         from agents.browser_agent import run_browser_agent
 
+        kb_key = os.environ.get("KB_KEY")
+        if kb_key:
+            # Auto-build prompt from knowledge base
+            from tools.kb_tools import get_knowledge
+
+            kb_entry = get_knowledge("staging_urls", kb_key)
+            if isinstance(kb_entry, dict) and "error" in kb_entry:
+                print(f"KB lookup failed: {kb_entry['error']}")
+                sys.exit(1)
+
+            url = kb_entry["url"]
+            creds = {k: v for k, v in kb_entry.items() if k != "url"}
+
+            # Generate a job_id
+            import hashlib, time
+
+            job_id = f"test-auto-{hashlib.md5(f'{kb_key}{time.time()}'.encode()).hexdigest()[:6]}"
+
+            creds_text = ""
+            if creds:
+                creds_text = "\n\nLogin credentials:\n" + "\n".join(
+                    f"  {k}: {v}" for k, v in creds.items()
+                )
+
+            page_name = os.environ.get("PAGE")
+            page_instruction = ""
+            if page_name:
+                page_instruction = (
+                    f"\n\nTarget section: {page_name}\n"
+                    f"After logging in, navigate to the '{page_name}' section/page "
+                    f"and focus your exploration there. Discover and capture ALL "
+                    f"functionalities within this section."
+                )
+
+            prompt = (
+                f"Explore the web application at {url}\n"
+                f"Job ID: {job_id}\n"
+                f"Output directory: outputs/{job_id}/\n"
+                f"{creds_text}"
+                f"{page_instruction}\n\n"
+                "Auto-discover and capture all functionalities on the page. "
+                "Follow your exploration protocol to systematically interact with "
+                "every UI element and take screenshots of each distinct state."
+            )
+            print(f"  Job ID:  {job_id}")
+            print(f"  KB Key:  {kb_key}")
+            if page_name:
+                print(f"  Page:    {page_name}")
+            print(f"  URL:     {url}")
+            print()
+
         result = await run_browser_agent(prompt)
 
     elif agent == "vision":

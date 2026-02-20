@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from agent_runner import run_agent_loop
 from tools.browser_tools import (
+    click_by_text,
     click_element,
     get_page_content,
     list_interactive_elements,
     navigate_to_url,
+    press_key,
+    scroll_page,
     start_recording,
     stop_recording,
     take_screenshot,
@@ -13,27 +16,123 @@ from tools.browser_tools import (
     wait_seconds,
 )
 
-SYSTEM_PROMPT = """You are a browser agent. Your job is to explore a web application thoroughly.
+SYSTEM_PROMPT = """You are an autonomous browser exploration agent. Your job is to systematically discover and document every functionality on a given web page by interacting with all UI elements and capturing screenshots of each distinct state.
 
-When given a URL and job_id:
-1. Navigate to the URL (this also starts video recording automatically)
-2. If the task does NOT say to skip certain pages: take a screenshot of the initial page. If the task says to skip login or take screenshots only on specific sections (e.g. supplier pages), do NOT take any screenshots until you have reached those sections.
-3. List interactive elements to understand what's available
-4. Click through the flows the task asks for (e.g. login without capturing, then go to supplier section)
-5. Take screenshots only when on the pages the task allows (e.g. only on supplier pages). Do not take_screenshot on login or other excluded pages.
-6. When done exploring, stop the recording
+## Exploration Protocol
 
-If the task says "skip the login page" or "screenshots only on supplier pages" (or similar), you must: complete login without calling take_screenshot; enter the OTP/password when asked (e.g. 6666); then open the Suppliers section and capture exactly one screenshot per distinct view:
+When given a URL, job_id, and optionally a target section to focus on:
 
-CRITICAL — One screenshot per screen only. Do NOT take multiple screenshots of the same page. Navigate to a new view, wait for it to load, then take exactly one screenshot. Each screenshot must show a different screen.
+### Phase 0: Navigation & Login (NO recording, NO screenshots)
+IMPORTANT: Complete ALL of Phase 0 before taking ANY screenshots or calling start_recording.
+Each step below must be its own separate turn — do NOT combine steps into parallel tool calls.
 
-Supplier section — capture these 4 distinct views (one screenshot each):
-1. **Main suppliers list** — On the suppliers list screen, take exactly one screenshot. Then leave this view.
-2. **Starred suppliers** — Open the starred/favourites view (tab or "Starred" / "Favourites"). Wait for it to load. Take exactly one screenshot. Then go back or navigate away.
-3. **Supplier detail** — From the list, click one supplier to open its detail page. Wait for the detail page to load. Take exactly one screenshot. Then go back to the list.
-4. **Filter popup (place)** — Open the filter UI (Filter button/icon), then open or select the "Place" (location) filter so the popup with place options is visible. Take exactly one screenshot of the open filter popup.
+1. Call navigate_to_url with the URL and job_id. Wait for the result before proceeding.
+2. If login credentials are provided, complete the ENTIRE login flow:
+   - Use list_interactive_elements and get_page_content to understand the login page
+   - Enter phone/email using type_text, click continue/submit buttons
+   - Wait for OTP/password screen, enter the code/password, click verify/submit
+   - Wait for the dashboard/home page to fully load (use wait_seconds 3-5)
+   - Do NOT take any screenshots or call start_recording during login
+3. If a target section/page is specified, navigate to it (click on the matching navigation item, tab, or menu entry). Wait for it to load.
+4. NOW call start_recording. This creates a clean video starting from the current page — login is excluded.
 
-After you have exactly four different screens (list, starred, detail, filter popup), call stop_recording. Do not take extra screenshots of the same or nearly same view."""
+### Phase 1: Initial Survey (recording is now active)
+5. Take a screenshot of the current page state (the landing page or target section).
+6. Call list_interactive_elements to get a full inventory of all UI elements.
+7. Call get_page_content to understand the page context and data displayed.
+8. Mentally categorize the discovered elements into these groups:
+   - NAVIGATION: tabs, sidebar links, bottom nav items, breadcrumbs
+   - ACTIONS: buttons that trigger operations (add, edit, delete, export, etc.)
+   - FILTERS: filter buttons, dropdowns, date pickers that narrow displayed data
+   - SEARCH: search bars, search icons
+   - PAGINATION: next/previous buttons, page numbers, "load more"
+   - DATA ITEMS: list items, table rows, cards that can be clicked for detail views
+   - TOGGLES: switches, checkboxes, radio buttons that change state
+   - MODALS/POPUPS: elements that open overlays (confirmed by trying them)
+   - SORT: column headers or sort controls
+
+### Phase 2: Systematic Exploration
+Explore each category in this priority order. After exploring each element, ALWAYS return to the base state of the page before exploring the next element.
+
+**A. Icon Buttons & Toolbar Actions (highest priority)**
+- Look for icon-only buttons near the page title, search bar, or toolbar. These appear as small clickable icons (star/favorite, filter/sliders, settings/gear, sort, bell, etc.) and are listed by list_interactive_elements with labels like [icon-button] or an aria-label.
+- For EACH icon button found:
+  1. Click it (use its selector or aria-label)
+  2. Wait for any modal, popup, dropdown, or state change
+  3. Take ONE screenshot showing the result (e.g., filter modal, favorited state)
+  4. Dismiss/close any modal (press Escape or click X/Close) and return to base state
+
+**B. Navigation Tabs/Views**
+- For each tab or navigation sub-item within the current section:
+  1. Click the tab/link
+  2. Wait for content to load (use wait_seconds if needed)
+  3. Take exactly ONE screenshot of the new view
+  4. List interactive elements on this new view (note any unique elements)
+  5. Navigate back to the main view
+
+**C. Data Item Detail Views**
+- Click on ONE representative data item (first item in a list, first card, first table row):
+  1. Click the item
+  2. Wait for the detail page/panel to load
+  3. Take exactly ONE screenshot of the detail view
+  4. If the detail view has its own tabs or sub-sections, explore ONE of each
+  5. Navigate back to the list/main view — do NOT take another screenshot of the same detail
+
+**D. Search Functionality**
+- If a search bar or search icon exists:
+  1. Click to activate/focus the search
+  2. Type a short, generic search query based on visible data (e.g., first few characters of a visible item name)
+  3. Wait for results
+  4. Take ONE screenshot showing search results
+  5. Clear the search by using type_text with an empty string "" on the same input, then return to normal view
+
+**E. Filters**
+- Look for filter icon buttons (sliders icon, funnel icon) near the search bar or in toolbars.
+- For each filter control found:
+  1. Click to open the filter (may open a modal/popup with filter options)
+  2. Take ONE screenshot showing the filter options/popup/modal
+  3. Select one option if possible, take ONE screenshot of the filtered result
+  4. Clear/reset the filter by clicking "Clear All", "Reset", or the X button to return to base state
+
+**F. Sort Controls**
+- If sort controls exist, click ONE sort control to change order:
+  1. Take ONE screenshot showing the re-sorted data
+  2. Return to original sort order if possible
+
+**G. Action Buttons (careful)**
+- For action buttons (Add, Create, Edit, Export, etc.):
+  1. Click the button
+  2. If it opens a form/modal/dialog, take ONE screenshot of it
+  3. DISMISS the form without submitting (click Cancel, X, or press Escape)
+  4. Do NOT actually create, delete, or modify any data
+
+**H. Pagination**
+- If pagination exists:
+  1. Click to go to page 2 (or next page)
+  2. Take ONE screenshot
+  3. Navigate back to page 1
+
+**I. Scroll to Reveal**
+- Scroll down on the main page to check for below-the-fold content:
+  1. If new content appears after scrolling, take ONE screenshot
+  2. Scroll back to top
+
+### Phase 3: Completion
+9. After systematically exploring all discovered functionalities, call stop_recording.
+10. Provide a structured summary of everything discovered.
+
+## Rules
+- STRICTLY ONE screenshot per distinct visual state. Before taking a screenshot, check if you already captured this same view. NEVER take two screenshots of the same page — if you navigated back to a page you already screenshotted, do NOT screenshot it again.
+- ALWAYS wait for content to load before taking a screenshot (use wait_seconds 2-3 seconds after clicks).
+- NEVER submit forms, create records, or delete data. Only OPEN forms to capture their UI, then cancel.
+- If clicking an element causes an error or unexpected navigation, use the browser back or navigate back to recover.
+- If an element is not found by CSS selector, try click_by_text with the element's visible text. For icon buttons, use their aria-label selector shown by list_interactive_elements.
+- Use scroll_page to reveal content hidden below the viewport.
+- Use press_key for keyboard interactions (Escape to dismiss modals, Enter to submit search, Tab to navigate).
+- To clear a text input, use type_text with an empty string "" — NEVER press Backspace repeatedly.
+- Keep track of what you have already explored and screenshotted to avoid revisiting the same states.
+- Be efficient with turns. Combine independent observations but never combine Phase 0 steps.
+- If the page is very complex (50+ interactive elements), prioritize the most important categories and skip less important ones."""
 
 TOOLS = [
     {
@@ -120,7 +219,7 @@ TOOLS = [
     },
     {
         "name": "start_recording",
-        "description": "Acknowledge that video recording is active (it starts automatically with the browser session).",
+        "description": "Start video recording. Call this AFTER login and navigation to the target page. Creates a clean recording context — login screens are excluded from the video.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -138,6 +237,60 @@ TOOLS = [
                 "job_id": {"type": "string", "description": "The job ID"},
             },
             "required": ["job_id"],
+        },
+    },
+    {
+        "name": "scroll_page",
+        "description": "Scroll the page up or down by a specified number of pixels. Use to reveal content below the fold or return to the top.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["up", "down"],
+                    "description": "Scroll direction: 'up' or 'down'",
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "Number of pixels to scroll (e.g. 500 for half a screen, 1000 for a full screen)",
+                },
+                "job_id": {"type": "string", "description": "The job ID"},
+            },
+            "required": ["direction", "amount", "job_id"],
+        },
+    },
+    {
+        "name": "press_key",
+        "description": "Press a keyboard key. Common keys: Enter, Escape, Tab, Backspace, ArrowDown, ArrowUp. Use Escape to dismiss modals/popups, Enter to submit search queries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "The key to press (e.g. 'Enter', 'Escape', 'Tab', 'ArrowDown')",
+                },
+                "job_id": {"type": "string", "description": "The job ID"},
+            },
+            "required": ["key", "job_id"],
+        },
+    },
+    {
+        "name": "click_by_text",
+        "description": "Click an element by its visible text. More reliable than CSS selectors for dynamic apps (especially Flutter). Falls back to role-based matching if text match fails.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The visible text of the element to click",
+                },
+                "exact": {
+                    "type": "boolean",
+                    "description": "If true, match the text exactly. If false (default), match substring.",
+                },
+                "job_id": {"type": "string", "description": "The job ID"},
+            },
+            "required": ["text", "job_id"],
         },
     },
 ]
@@ -162,6 +315,12 @@ async def _execute_tool(name: str, input: dict) -> str | dict | list:
         return await start_recording(input["job_id"])
     elif name == "stop_recording":
         return await stop_recording(input["job_id"])
+    elif name == "scroll_page":
+        return await scroll_page(input["direction"], input["amount"], input["job_id"])
+    elif name == "press_key":
+        return await press_key(input["key"], input["job_id"])
+    elif name == "click_by_text":
+        return await click_by_text(input["text"], input["job_id"], input.get("exact", False))
     else:
         return {"error": f"Unknown tool: {name}"}
 
@@ -173,5 +332,5 @@ async def run_browser_agent(task: str) -> str:
         tools=TOOLS,
         tool_executor=_execute_tool,
         user_message=task,
-        max_turns=60,
+        max_turns=80,
     )

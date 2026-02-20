@@ -17,7 +17,7 @@ async def _get_session(job_id: str) -> dict[str, Any]:
 
 
 async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
-    """Open a URL in the browser. Creates a new session if needed. Returns page title and description."""
+    """Open a URL in the browser WITHOUT video recording. Call start_recording later to begin recording."""
     output_dir = f"outputs/{job_id}"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -25,8 +25,6 @@ async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
         pw: Playwright = await async_playwright().start()
         browser: Browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
-            record_video_dir=output_dir,
-            record_video_size={"width": 1280, "height": 720},
             viewport={"width": 1280, "height": 720},
         )
         page: Page = await context.new_page()
@@ -119,27 +117,108 @@ async def click_element(selector: str, job_id: str) -> dict[str, str]:
     return {"status": "ok", "title": title, "url": page.url}
 
 
+async def click_by_text(text: str, job_id: str, exact: bool = False) -> dict[str, str]:
+    """Click an element by its visible text using Playwright's get_by_text locator.
+
+    More reliable than CSS selectors for Flutter apps. Falls back to
+    get_by_role if get_by_text finds nothing.
+    """
+    session = await _get_session(job_id)
+    page: Page = session["page"]
+    try:
+        locator = page.get_by_text(text, exact=exact)
+        count = await locator.count()
+        if count == 0:
+            # Fallback: try role-based locators
+            for role in ("button", "tab", "link", "menuitem"):
+                role_loc = page.get_by_role(role, name=text)
+                if await role_loc.count() > 0:
+                    locator = role_loc
+                    count = await locator.count()
+                    break
+        if count == 0:
+            return {"status": "error", "message": f"No element found with text: '{text}'"}
+        # Click the first visible match
+        target = locator.first
+        await target.scroll_into_view_if_needed()
+        await target.click()
+        await page.wait_for_timeout(1500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass  # Flutter apps may not trigger network activity
+        title = await page.title()
+        return {"status": "ok", "title": title, "url": page.url, "matches": count}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def scroll_page(direction: str, amount: int, job_id: str) -> dict[str, str]:
+    """Scroll the page using mouse wheel. direction: 'up' or 'down'. amount: pixels to scroll."""
+    session = await _get_session(job_id)
+    page: Page = session["page"]
+    try:
+        delta_y = amount if direction == "down" else -amount
+        await page.mouse.wheel(0, delta_y)
+        await page.wait_for_timeout(800)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "message": f"Scrolled {direction} by {amount}px"}
+
+
 async def list_interactive_elements(job_id: str) -> list[dict[str, str]]:
-    """List clickable elements on the current page with their selectors and text."""
+    """List clickable elements on the current page with their selectors and text.
+
+    Includes Flutter-specific semantic elements (flt-semantics, role=menuitem, etc.).
+    """
     session = await _get_session(job_id)
     page: Page = session["page"]
     elements = await page.evaluate("""() => {
-        const selectors = ['button', 'a[href]', 'input', 'textarea', 'select', 'input[type=submit]', '[role=button]', '[role=tab]', '[role=link]', '[role=textbox]'];
+        const selectors = [
+            'button', 'a[href]', 'input', 'textarea', 'select',
+            'input[type=submit]',
+            '[role=button]', '[role=tab]', '[role=link]', '[role=textbox]',
+            '[role=menuitem]', '[role=option]', '[role=listitem]',
+            'flt-semantics', 'flt-semantics-container',
+            '[aria-roledescription]',
+            '[aria-label]', 'svg[role]', '[data-icon]'
+        ];
+        const seen = new Set();
         const results = [];
         for (const sel of selectors) {
             for (const el of document.querySelectorAll(sel)) {
-                const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().substring(0, 100);
-                if (!text) continue;
+                // Try multiple sources for descriptive text
+                let text = (el.innerText || '').trim();
+                if (!text) text = (el.value || '').trim();
+                if (!text) text = (el.getAttribute('aria-label') || '').trim();
+                if (!text) text = (el.getAttribute('aria-roledescription') || '').trim();
+                if (!text) text = (el.getAttribute('title') || '').trim();
+                // For icon-only elements, describe by class or tag
+                if (!text) {
+                    const svg = el.querySelector('svg');
+                    const img = el.querySelector('img');
+                    const cls = el.className ? String(el.className).substring(0, 60) : '';
+                    if (svg) text = '[icon-button]';
+                    else if (img) text = '[image-button: ' + (img.alt || 'no-alt') + ']';
+                    else if (cls) text = '[' + cls.split(' ')[0] + ']';
+                }
+                if (!text) text = '[unnamed-' + el.tagName.toLowerCase() + ']';
+                text = text.substring(0, 100);
+                if (seen.has(text)) continue;
+                seen.add(text);
                 const tag = el.tagName.toLowerCase();
+                const role = el.getAttribute('role') || '';
                 const href = el.getAttribute('href') || '';
+                const ariaLabel = el.getAttribute('aria-label') || '';
                 // Build a usable selector
                 let css = sel;
                 if (el.id) css = '#' + el.id;
-                else if (text.length < 50) css = `${tag}:has-text("${text.replace(/"/g, '\\\\"')}")`;
-                results.push({tag, text, href, selector: css});
+                else if (ariaLabel) css = `[aria-label="${ariaLabel.replace(/"/g, '\\\\"')}"]`;
+                else if (text.length < 50 && !text.startsWith('[')) css = `${tag}:has-text("${text.replace(/"/g, '\\\\"')}")`;
+                results.push({tag, text, role, href, selector: css, ariaLabel});
             }
         }
-        return results.slice(0, 30);
+        return results.slice(0, 60);
     }""")
     return elements
 
@@ -162,10 +241,41 @@ async def get_page_content(job_id: str) -> dict[str, str]:
 
 
 async def start_recording(job_id: str) -> dict[str, str]:
-    """Start video recording. Recording is already active from context creation, so this is a no-op acknowledgment."""
+    """Start video recording by creating a new browser context with recording enabled.
+
+    Preserves the current session (cookies, localStorage) and navigates to the
+    current URL so the video begins clean — no login screens recorded.
+    """
     if job_id not in _sessions:
         return {"status": "error", "message": "No browser session. Call navigate_to_url first."}
-    return {"status": "recording", "message": "Video recording is active since session start."}
+
+    session = _sessions[job_id]
+    page: Page = session["page"]
+    output_dir = session["output_dir"]
+
+    # 1. Save current state and URL
+    storage_state = await session["context"].storage_state()
+    current_url = page.url
+
+    # 2. Close old context (no video was recorded)
+    await session["context"].close()
+
+    # 3. Create new context WITH video recording, importing saved state
+    new_context = await session["browser"].new_context(
+        record_video_dir=output_dir,
+        record_video_size={"width": 1280, "height": 720},
+        viewport={"width": 1280, "height": 720},
+        storage_state=storage_state,
+    )
+    new_page: Page = await new_context.new_page()
+    await new_page.goto(current_url, wait_until="networkidle")
+    await new_page.wait_for_timeout(1500)
+
+    # 4. Update session references
+    session["context"] = new_context
+    session["page"] = new_page
+
+    return {"status": "recording", "message": f"Video recording started on {current_url}"}
 
 
 async def stop_recording(job_id: str) -> dict[str, str | None]:
