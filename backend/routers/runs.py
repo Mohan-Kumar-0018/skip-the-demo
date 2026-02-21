@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from db.models import (
     get_browser_data,
@@ -18,6 +18,16 @@ from db.models import (
 )
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+
+def _to_absolute_url(request: Request, path: str) -> str:
+    """Convert a relative output path to an absolute URL."""
+    base = str(request.base_url).rstrip("/")
+    path = path.lstrip("/")
+    if not path.startswith("outputs/"):
+        path = f"outputs/{path}"
+    return f"{base}/{path}"
+
 
 _STEP_DISPLAY_NAMES = {
     "jira_fetch": "Ticket Scout",
@@ -48,7 +58,7 @@ def runs_list():
 
 
 @router.get("/{job_id}")
-def run_detail(job_id: str):
+def run_detail(job_id: str, request: Request):
     """Single run: header, plan timeline, results, token usage."""
     run = get_run(job_id)
     if not run:
@@ -113,13 +123,12 @@ def run_detail(job_id: str):
             "summary": results_row.get("summary") or "",
             "release_notes": results_row.get("release_notes") or "",
             "video_url": (
-                f"/{results_row['video_path']}"
+                _to_absolute_url(request, results_row["video_path"])
                 if results_row.get("video_path")
                 else None
             ),
             "screenshots": [
-                f"/{s}" if not s.startswith("/") else s
-                for s in screenshots
+                _to_absolute_url(request, s) for s in screenshots
             ],
             "slack_sent": bool(results_row.get("slack_sent")),
         }
@@ -164,7 +173,7 @@ def run_detail(job_id: str):
 
 
 @router.get("/{job_id}/plan/{step_name}")
-def step_detail(job_id: str, step_name: str):
+def step_detail(job_id: str, step_name: str, request: Request):
     """Step-level drill-down with plan metadata + relevant agent data."""
     run = get_run(job_id)
     if not run:
@@ -194,7 +203,7 @@ def step_detail(job_id: str, step_name: str):
             if isinstance(paths, str):
                 paths = json.loads(paths)
             agent_data["screenshot_paths"] = [
-                f"/{p}" if not p.startswith("/") else p for p in paths
+                _to_absolute_url(request, p) for p in paths
             ]
 
     return {
