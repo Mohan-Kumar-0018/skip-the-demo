@@ -15,7 +15,8 @@
       "Bash(find:*)",
       "Bash(make:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(ls:*)"
     ]
   }
 }

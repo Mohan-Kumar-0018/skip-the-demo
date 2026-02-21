@@ -261,29 +261,41 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
         update_plan_step(run_id, "figma_export", "skipped", result_summary="No Figma links found")
         return "Skipped — no Figma links"
 
-    figma_url = design_links[0]
-    task = (
-        f"Extract the design from this Figma link: {figma_url}. "
-        f"Save exported images to outputs/{run_id}/figma/."
-    )
-    result = await run_figma_agent(task)
-    _save_usage(run_id, "figma", result)
+    all_exported: list[dict] = []
+    all_errors: list[dict] = []
+    primary_url = design_links[0]
+    primary_file_info: dict = {}
+    primary_node_info: dict = {}
 
-    figma_data = result["data"]
-    parsed = figma_data.get("parsed_url", {})
-    file_info = figma_data.get("file_info", {})
-    node_info = figma_data.get("node_info", {})
+    for figma_url in design_links:
+        logger.info("[%s] figma_export: processing link %s", run_id, figma_url)
+        task = (
+            f"Extract the design from this Figma link: {figma_url}. "
+            f"Save exported images to outputs/{run_id}/figma/."
+        )
+        result = await run_figma_agent(task)
+        _save_usage(run_id, "figma", result)
+
+        figma_data = result["data"]
+        all_exported.extend(figma_data.get("exported", []))
+        all_errors.extend(figma_data.get("errors", []))
+        if figma_url == primary_url:
+            primary_file_info = figma_data.get("file_info", {})
+            primary_node_info = figma_data.get("node_info", {})
+
+    logger.info("[%s] figma_export: %d images exported from %d links, %d errors",
+                run_id, len(all_exported), len(design_links), len(all_errors))
 
     save_figma_data(run_id, {
-        "figma_url": figma_url,
-        "file_name": file_info.get("name", ""),
-        "file_last_modified": file_info.get("last_modified", ""),
-        "node_name": node_info.get("name", ""),
-        "exported_images": figma_data.get("exported", []),
-        "export_errors": figma_data.get("errors", []),
+        "figma_url": primary_url,
+        "file_name": primary_file_info.get("name", ""),
+        "file_last_modified": primary_file_info.get("last_modified", ""),
+        "node_name": primary_node_info.get("name", ""),
+        "exported_images": all_exported,
+        "export_errors": all_errors,
     })
 
-    return result["summary"]
+    return f"Exported {len(all_exported)} images from {len(design_links)} Figma links"
 
 
 async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
@@ -310,6 +322,11 @@ async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
 
     result = plan_navigation(figma_images, prd_text)
     _save_usage(run_id, "nav_planner", result)
+
+    if result.get("error_code"):
+        logger.warning("[%s] nav_plan: agent returned error: %s", run_id, result.get("summary"))
+        save_step_output(run_id, "nav_plan", {"nav_screens": []})
+        return f"Nav plan error: {result.get('summary', 'unknown')}"
 
     screens = result.get("screens") or []
     save_step_output(run_id, "nav_plan", {"nav_screens": screens})
@@ -360,19 +377,22 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
         )
 
     task = (
-        f"Explore the web application at {staging_url} thoroughly.\n"
+        f"Explore the web application at {staging_url}.\n"
         f"Job ID: {run_id}\n"
         f"Output directory: outputs/{run_id}/browser/\n"
         f"{creds_text}\n\n"
         "Instructions:\n"
-        "1. Navigate to the URL\n"
-        "2. If there's a login page, use the provided credentials to log in\n"
-        "3. Take a screenshot of every page you visit\n"
-        "4. List interactive elements and click through ALL navigation links, tabs, and menu items\n"
-        "5. Systematically visit every reachable page in the application\n"
-        "6. Take a screenshot after each navigation\n"
-        "7. When you've explored all pages, stop the recording\n"
-        "8. Provide a summary of all pages and flows discovered"
+        "1. Navigate to the URL and log in if credentials are provided\n"
+        "2. Start recording after login completes\n"
+        "3. Visit each main navigation section/tab — take ONE screenshot per screen\n"
+        "4. Open ONE detail view and ONE action form per section (dismiss without submitting)\n"
+        "5. Prioritize breadth over depth — cover all sections before exploring sub-features\n"
+        "6. Stop recording when all main sections are covered\n"
+        "7. Provide a structured summary of pages and flows discovered\n\n"
+        "Error recovery:\n"
+        "- If a click fails, try click_by_text with the element's visible text\n"
+        "- If navigation breaks, go back to the last known good page and continue\n"
+        "- Skip elements that fail twice — move on to the next section"
         f"{nav_guidance}"
     )
 
@@ -460,6 +480,15 @@ async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
         logger.exception("[%s] design_compare: vision agent failed", run_id)
         raise
 
+    # Handle graceful error returns from vision agent
+    if result.get("error_code"):
+        logger.warning("[%s] design_compare: agent returned error: %s", run_id, result.get("summary"))
+        save_step_output(run_id, "design_compare", {
+            "design_score": 0,
+            "deviations": [],
+        })
+        return f"Vision error: {result.get('summary', 'unknown')}"
+
     logger.info("[%s] design_compare: score=%s, deviations=%d", run_id, result.get("score"), len(result.get("deviations", [])))
     save_step_output(run_id, "design_compare", {
         "design_score": result["score"],
@@ -499,6 +528,15 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
         logger.exception("[%s] synthesis: agent failed", run_id)
         raise
 
+    # Handle graceful error returns from synthesis agent
+    if result.get("error_code"):
+        logger.warning("[%s] synthesis: agent returned error: %s", run_id, result.get("summary"))
+        save_step_output(run_id, "synthesis", {
+            "summary": result.get("summary", "Synthesis failed"),
+            "release_notes": "",
+        })
+        return f"Synthesis error: {result.get('summary', 'unknown')}"
+
     logger.info("[%s] synthesis: summary=%d chars, release_notes=%d chars", run_id, len(result.get("summary", "")), len(result.get("release_notes", "")))
     save_step_output(run_id, "synthesis", {
         "summary": result["summary"],
@@ -533,9 +571,16 @@ async def _execute_slack(run_id: str, ticket_id: str, params: dict) -> str:
     video_path = browser_out.get("video_path", "") if browser_out else ""
 
     # Build briefing message
+    if design_score >= 80:
+        score_emoji = "🟢"
+    elif design_score >= 60:
+        score_emoji = "🟡"
+    else:
+        score_emoji = "🔴"
+
     parts = [
         f"*SkipTheDemo Briefing — {feature_name}*\n",
-        f"*Design Score:* {design_score}/100",
+        f"*Design Score:* {score_emoji} {design_score}/100",
     ]
 
     if deviations:

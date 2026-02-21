@@ -28,55 +28,66 @@ def compare_design_vs_reality(
     design_bytes: bytes, screenshots: list[str]
 ) -> dict[str, Any]:
     logger.info("Vision compare: %d design bytes, %d screenshots", len(design_bytes), len(screenshots))
+
+    if not design_bytes:
+        return {"score": 0, "deviations": [], "summary": "No design image provided", "error_code": "NO_DESIGN", "usage": {}}
+
+    if not screenshots or not os.path.isfile(screenshots[0]):
+        return {"score": 0, "deviations": [], "summary": "No screenshots available for comparison", "error_code": "NO_SCREENSHOTS", "usage": {}}
+
     design_b64 = _b64_bytes(design_bytes)
     actual_b64 = _b64(screenshots[0])
 
     model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-    response = client.messages.create(
-        model=model,
-        max_tokens=1500,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": design_b64,
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=1500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": design_b64,
+                            },
                         },
-                    },
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": actual_b64,
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": actual_b64,
+                            },
                         },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "First image = original design. Second image = actual built feature.\n\n"
-                            "Compare them carefully. Return ONLY valid JSON — no markdown, no explanation:\n"
-                            "{\n"
-                            '  "score": <integer 0-100, how closely built feature matches design>,\n'
-                            '  "deviations": [\n'
-                            "    {\n"
-                            '      "type": "visual | flow | missing | new",\n'
-                            '      "description": "specific human-readable difference",\n'
-                            '      "severity": "low | medium | high"\n'
-                            "    }\n"
-                            "  ],\n"
-                            '  "summary": "One sentence overall assessment."\n'
-                            "}"
-                        ),
-                    },
-                ],
-            }
-        ],
-    )
+                        {
+                            "type": "text",
+                            "text": (
+                                "First image = original design. Second image = actual built feature.\n\n"
+                                "Compare them carefully. Return ONLY valid JSON — no markdown, no explanation:\n"
+                                "{\n"
+                                '  "score": <integer 0-100, how closely built feature matches design>,\n'
+                                '  "deviations": [\n'
+                                "    {\n"
+                                '      "type": "visual | flow | missing | new",\n'
+                                '      "description": "specific human-readable difference",\n'
+                                '      "severity": "low | medium | high"\n'
+                                "    }\n"
+                                "  ],\n"
+                                '  "summary": "One sentence overall assessment."\n'
+                                "}"
+                            ),
+                        },
+                    ],
+                }
+            ],
+        )
+    except anthropic.APIError as e:
+        logger.error("Vision API call failed: %s", e)
+        return {"score": 0, "deviations": [], "summary": f"Vision API error: {e}", "error_code": "API_ERROR", "usage": {}}
 
     text = response.content[0].text
     logger.info("Vision agent response: %d chars", len(text))

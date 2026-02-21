@@ -63,8 +63,11 @@ async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
     else:
         page = _sessions[job_id]["page"]
 
-    await page.goto(url, wait_until="networkidle")
-    await page.wait_for_timeout(500)  # let app (e.g. Flutter) settle
+    try:
+        await page.goto(url, wait_until="networkidle")
+        await page.wait_for_timeout(500)  # let app (e.g. Flutter) settle
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to navigate to {url}: {e}"}
     title = await page.title()
     meta_desc = await page.evaluate(
         "() => document.querySelector('meta[name=\"description\"]')?.content || ''"
@@ -202,14 +205,15 @@ async def scroll_page(direction: str, amount: int, job_id: str) -> dict[str, str
     return {"status": "ok", "message": f"Scrolled {direction} by {amount}px"}
 
 
-async def list_interactive_elements(job_id: str) -> list[dict[str, str]]:
+async def list_interactive_elements(job_id: str) -> list[dict[str, str]] | dict[str, str]:
     """List clickable elements on the current page with their selectors and text.
 
     Includes Flutter-specific semantic elements (flt-semantics, role=menuitem, etc.).
     """
     session = await _get_session(job_id)
     page: Page = session["page"]
-    elements = await page.evaluate("""() => {
+    try:
+        elements = await page.evaluate("""() => {
         const selectors = [
             'button', 'a[href]', 'input', 'textarea', 'select',
             'input[type=submit]',
@@ -256,6 +260,8 @@ async def list_interactive_elements(job_id: str) -> list[dict[str, str]]:
         }
         return results.slice(0, 60);
     }""")
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to list interactive elements: {e}"}
     return elements
 
 
@@ -271,8 +277,11 @@ async def get_page_content(job_id: str) -> dict[str, str]:
     """Get the visible text content of the current page."""
     session = await _get_session(job_id)
     page: Page = session["page"]
-    text = await page.evaluate("() => document.body.innerText")
-    title = await page.title()
+    try:
+        text = await page.evaluate("() => document.body.innerText")
+        title = await page.title()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to get page content: {e}"}
     return {"title": title, "url": page.url, "text": text[:5000]}
 
 

@@ -15,7 +15,13 @@ SYSTEM_PROMPT = """You are a Jira agent. Given a task, decide what information t
 
 When fetching attachments, use the output_dir provided in the task. Categorize what you download (PRD documents, design files, etc).
 
-Always return a clear, structured summary of what you found."""
+Always return a clear, structured summary of what you found.
+
+Error handling:
+- If a tool returns a result with "status": "error", report the error clearly in your summary.
+- If get_jira_ticket fails, stop immediately — the ticket is the minimum required data.
+- If subtasks, comments, or attachments fail, note the failure but continue with whatever data you have.
+- Never silently ignore errors — always include them in your response so the pipeline can decide what to do."""
 
 TOOLS = [
     {

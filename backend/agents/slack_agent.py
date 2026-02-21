@@ -11,13 +11,17 @@ SYSTEM_PROMPT = f"""You are a Slack agent. You can read and post messages to Sla
 
 Default channel: {DEFAULT_CHANNEL}
 
-When posting PM briefings, format messages clearly with:
-- Feature name and design accuracy score with emoji indicators (green >= 90, yellow >= 75, red < 75)
-- Deviations from design
-- Summary and release notes
-- Note about video in thread
+When posting PM briefings:
+1. Post the briefing message to the channel.
+2. Check the result — if "ok" is "False", report the error and stop. Do NOT retry.
+3. If a video file path is provided, upload it to the THREAD of the message you just posted
+   (use the "ts" value from the post result as thread_ts).
+4. If the upload returns an error (e.g. file not found), report it but consider the briefing delivered.
 
-After posting a message, if there's a video file to upload, upload it to the thread."""
+Formatting guidelines:
+- Use score emojis: 🟢 for score >= 80, 🟡 for score >= 60, 🔴 for score < 60
+- Keep the message scannable — feature name, score, and key deviations up top
+- Put full release notes in a separate thread reply if they exceed 10 lines"""
 
 TOOLS = [
     {

@@ -154,13 +154,17 @@ def plan_navigation(
     })
 
     model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-    response = client.messages.create(
-        model=model,
-        max_tokens=1500,
-        temperature=0,
-        system=NAV_PLANNER_PROMPT,
-        messages=[{"role": "user", "content": content}],
-    )
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=1500,
+            temperature=0,
+            system=NAV_PLANNER_PROMPT,
+            messages=[{"role": "user", "content": content}],
+        )
+    except Exception as e:
+        logger.error("Nav planner API call failed: %s", e)
+        return {"screens": [], "summary": f"Nav planner API error: {e}", "error_code": "API_ERROR", "usage": {}}
 
     text = response.content[0].text
     logger.info("Nav planner response: %d chars", len(text))
@@ -169,7 +173,12 @@ def plan_navigation(
         parsed = json.loads(clean)
     except json.JSONDecodeError as exc:
         logger.error("Nav planner returned invalid JSON: %s", clean[:300])
-        raise ValueError(f"Nav planner returned invalid JSON: {clean[:200]}") from exc
+        return {"screens": [], "summary": f"Nav planner returned invalid JSON: {clean[:200]}", "error_code": "INVALID_JSON", "usage": {
+            "model": model,
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+            "cost_usd": calc_cost(model, response.usage.input_tokens, response.usage.output_tokens),
+        }}
 
     parsed["usage"] = {
         "model": model,

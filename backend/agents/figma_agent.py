@@ -20,7 +20,12 @@ Steps:
 4. Also export the parent node itself as a single overview image using export_node_as_image.
 5. Report what was downloaded — list all file paths and screen names.
 
-If the URL has no node-id, get the file info first and export the first page."""
+If the URL has no node-id, get the file info first and export the first page.
+
+Error handling:
+- If the Figma API returns an error, report the error clearly — do not silently skip.
+- If a node has no exportable FRAME children, export the node itself as a single image.
+- Verify each export succeeded by checking the tool result for errors."""
 
 TOOLS = [
     {

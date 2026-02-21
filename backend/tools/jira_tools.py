@@ -17,11 +17,21 @@ def _auth() -> tuple[str | None, str | None]:
 def get_jira_ticket(ticket_id: str) -> dict[str, Any]:
     """Fetch ticket details from Jira. Returns title, description, staging_url, status, assignee."""
     url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}"
-    res = requests.get(url, auth=_auth()).json()
-    f = res["fields"]
+    try:
+        res = requests.get(url, auth=_auth())
+        if not res.ok:
+            return {"status": "error", "error_code": "JIRA_API_ERROR", "message": f"Jira API returned {res.status_code}: {res.text[:200]}"}
+        data = res.json()
+    except requests.RequestException as e:
+        return {"status": "error", "error_code": "JIRA_CONNECTION_ERROR", "message": f"Failed to connect to Jira: {e}"}
+
+    f = data.get("fields")
+    if not f:
+        return {"status": "error", "error_code": "JIRA_INVALID_RESPONSE", "message": f"No 'fields' in Jira response for {ticket_id}"}
+
     assignee = f.get("assignee") or {}
     return {
-        "title": f["summary"],
+        "title": f.get("summary", ""),
         "description": f.get("description", ""),
         "staging_url": f.get(os.getenv("JIRA_STAGING_URL_FIELD", ""), ""),
         "status": f.get("status", {}).get("name", ""),
@@ -29,32 +39,57 @@ def get_jira_ticket(ticket_id: str) -> dict[str, Any]:
     }
 
 
-def get_jira_subtasks(ticket_id: str) -> list[dict[str, str]]:
+def get_jira_subtasks(ticket_id: str) -> list[dict[str, str]] | dict[str, str]:
     """Fetch subtasks for a Jira ticket. Returns list of {key, summary, status}."""
     url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}"
-    res = requests.get(url, auth=_auth()).json()
-    subtasks = res["fields"].get("subtasks", [])
+    try:
+        res = requests.get(url, auth=_auth())
+        if not res.ok:
+            return {"status": "error", "error_code": "JIRA_API_ERROR", "message": f"Jira API returned {res.status_code}: {res.text[:200]}"}
+        data = res.json()
+    except requests.RequestException as e:
+        return {"status": "error", "error_code": "JIRA_CONNECTION_ERROR", "message": f"Failed to connect to Jira: {e}"}
+
+    subtasks = data.get("fields", {}).get("subtasks", [])
     return [
         {
             "key": st["key"],
-            "summary": st["fields"]["summary"],
-            "status": st["fields"]["status"]["name"],
+            "summary": st.get("fields", {}).get("summary", ""),
+            "status": st.get("fields", {}).get("status", {}).get("name", ""),
         }
         for st in subtasks
     ]
 
 
-def get_jira_attachments(ticket_id: str, output_dir: str) -> list[dict[str, str]]:
+def get_jira_attachments(ticket_id: str, output_dir: str) -> list[dict[str, str]] | dict[str, str]:
     """Download all attachments from a ticket. Saves files to output_dir. Returns list of {filename, path, mime_type, category}."""
     os.makedirs(output_dir, exist_ok=True)
     url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}"
-    res = requests.get(url, auth=_auth()).json()
-    attachments = res["fields"].get("attachment", [])
+    try:
+        res = requests.get(url, auth=_auth())
+        if not res.ok:
+            return {"status": "error", "error_code": "JIRA_API_ERROR", "message": f"Jira API returned {res.status_code}: {res.text[:200]}"}
+        data = res.json()
+    except requests.RequestException as e:
+        return {"status": "error", "error_code": "JIRA_CONNECTION_ERROR", "message": f"Failed to connect to Jira: {e}"}
+
+    attachments = data.get("fields", {}).get("attachment", [])
 
     results = []
     for att in attachments:
         name = att["filename"]
-        content = requests.get(att["content"], auth=_auth()).content
+        try:
+            content = requests.get(att["content"], auth=_auth()).content
+        except requests.RequestException as e:
+            results.append({
+                "filename": name,
+                "path": "",
+                "mime_type": att.get("mimeType", ""),
+                "category": "error",
+                "error": f"Failed to download: {e}",
+            })
+            continue
+
         path = os.path.join(output_dir, name)
         with open(path, "wb") as f:
             f.write(content)
@@ -78,11 +113,18 @@ def get_jira_attachments(ticket_id: str, output_dir: str) -> list[dict[str, str]
     return results
 
 
-def get_jira_comments(ticket_id: str) -> list[dict[str, str]]:
+def get_jira_comments(ticket_id: str) -> list[dict[str, str]] | dict[str, str]:
     """Fetch all comments on a Jira ticket. Returns list of {author, body, created}."""
     url = f"https://{JIRA_HOST}/rest/api/3/issue/{ticket_id}/comment"
-    res = requests.get(url, auth=_auth()).json()
-    comments = res.get("comments", [])
+    try:
+        res = requests.get(url, auth=_auth())
+        if not res.ok:
+            return {"status": "error", "error_code": "JIRA_API_ERROR", "message": f"Jira API returned {res.status_code}: {res.text[:200]}"}
+        data = res.json()
+    except requests.RequestException as e:
+        return {"status": "error", "error_code": "JIRA_CONNECTION_ERROR", "message": f"Failed to connect to Jira: {e}"}
+
+    comments = data.get("comments", [])
     results = []
     for c in comments:
         # Extract plain text from ADF body
@@ -114,5 +156,10 @@ def add_jira_comment(ticket_id: str, text: str) -> dict[str, str]:
             ],
         }
     }
-    res = requests.post(url, json=payload, auth=_auth())
-    return {"status": "ok" if res.ok else "error", "code": str(res.status_code)}
+    try:
+        res = requests.post(url, json=payload, auth=_auth())
+        if not res.ok:
+            return {"status": "error", "error_code": "JIRA_API_ERROR", "message": f"Failed to post comment: {res.status_code} {res.text[:200]}"}
+        return {"status": "ok", "code": str(res.status_code)}
+    except requests.RequestException as e:
+        return {"status": "error", "error_code": "JIRA_CONNECTION_ERROR", "message": f"Failed to connect to Jira: {e}"}

@@ -123,6 +123,11 @@ def export_figma_node(
     with open(path, "wb") as f:
         f.write(img_res.content)
 
+    # Validate PNG magic bytes
+    if format == "png" and img_res.content[:4] != b'\x89PNG':
+        os.remove(path)
+        return {"error": f"Downloaded file for node {node_id} is not a valid PNG"}
+
     return {"path": os.path.abspath(path), "url": image_url}
 
 
@@ -183,6 +188,12 @@ def export_figma_nodes(
 
         with open(path, "wb") as f:
             f.write(img_res.content)
+
+        # Validate PNG magic bytes
+        if format == "png" and img_res.content[:4] != b'\x89PNG':
+            errors.append({"id": node_id, "name": name, "error": "Downloaded file is not a valid PNG"})
+            os.remove(path)
+            continue
 
         exported.append({"name": name, "id": node_id, "path": os.path.abspath(path)})
 

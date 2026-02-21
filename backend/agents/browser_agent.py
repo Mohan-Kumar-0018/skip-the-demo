@@ -94,7 +94,15 @@ BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT 
 - To clear a text input, use type_text with an empty string "" — NEVER press Backspace repeatedly.
 - Keep track of what you have already explored and screenshotted to avoid revisiting the same states.
 - Be efficient with turns — aim to finish in 15-25 turns. Do NOT exhaustively explore every element.
-- Prioritize breadth (visiting all main screens) over depth (exploring every button on one screen)."""
+- Prioritize breadth (visiting all main screens) over depth (exploring every button on one screen).
+
+## Error Handling
+- If a tool returns "status": "error", do NOT retry the same action more than once.
+- If navigate_to_url fails, report the error and stop — the URL is unreachable.
+- If a click fails, try click_by_text with the element's visible text as a fallback.
+- If a fallback also fails, skip that element and move on to the next section.
+- If login fails after credentials are entered, report the error with the page content so the pipeline knows why.
+- Always include any errors encountered in your final summary."""
 
 TOOLS = [
     {
