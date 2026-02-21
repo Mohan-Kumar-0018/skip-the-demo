@@ -145,11 +145,15 @@ def run_detail(job_id: str):
         else None
     )
 
+    # Overall score: design_score from results (0 if no results yet)
+    overall_score = results["design_score"] if results else 0
+
     return {
         "job_id": run["id"],
         "ticket_id": run.get("ticket_id"),
         "feature_name": run.get("feature_name"),
         "status": run.get("status"),
+        "overall_score": overall_score,
         "created_at": created_at.isoformat() if created_at else None,
         "completed_at": completed_at.isoformat() if completed_at else None,
         "duration_secs": duration_secs,
@@ -195,6 +199,7 @@ def step_detail(job_id: str, step_name: str):
 
     return {
         "step_name": step["step_name"],
+        "display_name": _STEP_DISPLAY_NAMES.get(step_name, step_name),
         "agent": step.get("agent"),
         "status": step.get("status"),
         "duration_secs": duration_secs,
