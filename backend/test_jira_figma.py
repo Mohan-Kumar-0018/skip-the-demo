@@ -148,14 +148,9 @@ async def main():
 
             save_figma_data(run_id, {
                 "figma_url": link,
-                "file_key": parsed.get("file_key", ""),
-                "node_id": parsed.get("node_id", ""),
                 "file_name": file_info.get("name", ""),
                 "file_last_modified": file_info.get("last_modified", ""),
-                "pages": file_info.get("pages", []),
                 "node_name": node_info.get("name", ""),
-                "node_type": node_info.get("type", ""),
-                "node_children": node_info.get("children", []),
                 "exported_images": figma_data.get("exported", []),
                 "export_errors": figma_data.get("errors", []),
             })
@@ -169,13 +164,8 @@ async def main():
             t = Table(title="Figma Data (from DB)", show_lines=True, border_style="magenta")
             t.add_column("Field", style="bold", width=16)
             t.add_column("Value")
-            t.add_row("File Key", str(d.get("file_key", "")))
-            t.add_row("Node ID", str(d.get("node_id", "")))
             t.add_row("File Name", str(d.get("file_name", "")))
             t.add_row("Node Name", str(d.get("node_name", "")))
-            t.add_row("Node Type", str(d.get("node_type", "")))
-            children = d.get("node_children") or []
-            t.add_row("Children", f"{len(children)} node(s)")
             images = d.get("exported_images") or []
             t.add_row("Exported", f"{len(images)} image(s)")
             for img in images:

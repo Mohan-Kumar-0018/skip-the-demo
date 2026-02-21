@@ -227,34 +227,23 @@ def save_figma_data(run_id: str, data: dict[str, Any]) -> None:
             cur.execute(
                 """
                 INSERT INTO run_figma_data
-                  (run_id, figma_url, file_key, node_id, file_name,
-                   file_last_modified, pages, node_name, node_type,
-                   node_children, exported_images, export_errors)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  (run_id, figma_url, file_name, file_last_modified,
+                   node_name, exported_images, export_errors)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (run_id) DO UPDATE SET
                     figma_url          = EXCLUDED.figma_url,
-                    file_key           = EXCLUDED.file_key,
-                    node_id            = EXCLUDED.node_id,
                     file_name          = EXCLUDED.file_name,
                     file_last_modified = EXCLUDED.file_last_modified,
-                    pages              = EXCLUDED.pages,
                     node_name          = EXCLUDED.node_name,
-                    node_type          = EXCLUDED.node_type,
-                    node_children      = EXCLUDED.node_children,
                     exported_images    = EXCLUDED.exported_images,
                     export_errors      = EXCLUDED.export_errors
                 """,
                 (
                     run_id,
                     data.get("figma_url", ""),
-                    data.get("file_key", ""),
-                    data.get("node_id", ""),
                     data.get("file_name", ""),
                     data.get("file_last_modified", ""),
-                    json.dumps(data.get("pages", [])),
                     data.get("node_name", ""),
-                    data.get("node_type", ""),
-                    json.dumps(data.get("node_children", [])),
                     json.dumps(data.get("exported_images", [])),
                     json.dumps(data.get("export_errors", [])),
                 ),

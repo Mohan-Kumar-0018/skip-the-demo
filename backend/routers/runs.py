@@ -139,6 +139,9 @@ def step_detail(job_id: str, step_name: str):
     fetcher = _STEP_AGENT_DATA.get(step_name)
     raw = fetcher(job_id) if fetcher else None
     agent_data = dict(raw) if raw else None
+    if agent_data:
+        for key in ("id", "run_id", "created_at"):
+            agent_data.pop(key, None)
 
     return {
         "step_name": step["step_name"],

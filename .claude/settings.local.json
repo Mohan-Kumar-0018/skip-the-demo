@@ -13,7 +13,9 @@
       "Bash(git commit:*)",
       "Bash(curl:*)",
       "Bash(find:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)"
     ]
   }
 }

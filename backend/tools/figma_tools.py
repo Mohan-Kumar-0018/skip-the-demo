@@ -123,7 +123,7 @@ def export_figma_node(
     with open(path, "wb") as f:
         f.write(img_res.content)
 
-    return {"path": path, "url": image_url}
+    return {"path": os.path.abspath(path), "url": image_url}
 
 
 def _sanitize_filename(name: str) -> str:
@@ -184,6 +184,6 @@ def export_figma_nodes(
         with open(path, "wb") as f:
             f.write(img_res.content)
 
-        exported.append({"name": name, "id": node_id, "path": path})
+        exported.append({"name": name, "id": node_id, "path": os.path.abspath(path)})
 
     return {"exported": exported, "errors": errors}

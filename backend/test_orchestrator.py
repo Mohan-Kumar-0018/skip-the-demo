@@ -222,13 +222,8 @@ def print_results(run_id):
         t = Table(title="Figma Data", show_lines=True, border_style="magenta")
         t.add_column("Field", style="bold", width=16)
         t.add_column("Value")
-        t.add_row("File Key", str(d.get("file_key", "")))
-        t.add_row("Node ID", str(d.get("node_id", "")))
         t.add_row("File Name", str(d.get("file_name", "")))
         t.add_row("Node Name", str(d.get("node_name", "")))
-        t.add_row("Node Type", str(d.get("node_type", "")))
-        children = d.get("node_children") or []
-        t.add_row("Children", f"{len(children)} node(s)")
         images = d.get("exported_images") or []
         t.add_row("Exported", f"{len(images)} image(s)")
         for img in images:
