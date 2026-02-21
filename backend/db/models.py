@@ -580,6 +580,24 @@ def assemble_results(run_id: str) -> dict[str, Any]:
     }
 
 
+# ── RUN STEPS (reality) ──────────────────
+
+
+def get_run_steps(run_id: str) -> list[dict[str, Any]]:
+    """Fetch executed steps directly from run_steps table, ordered by step_order."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM run_steps
+                WHERE run_id = %s
+                ORDER BY step_order
+                """,
+                (run_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
 # ── PLAN ─────────────────────────────────
 
 

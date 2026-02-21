@@ -12,6 +12,7 @@ from db.models import (
     get_plan,
     get_results,
     get_run,
+    get_run_steps,
     get_token_usage,
     get_token_usage_summary,
 )
@@ -26,6 +27,7 @@ _STEP_DISPLAY_NAMES = {
     "discover_crawl": "App Navigator",
     "browser_crawl": "App Navigator",
     "design_compare": "Pixel Judge",
+    "demo_video": "Demo Director",
     "synthesis": "Story Weaver",
     "slack_delivery": "Dispatch Runner",
 }
@@ -52,8 +54,8 @@ def run_detail(job_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # Plan timeline
-    plan_steps = get_plan(job_id)
+    # Steps from run_steps table (reality, not plan intent)
+    steps = get_run_steps(job_id)
 
     # Build agent_name → cost lookup from token usage
     agent_costs = {}
@@ -68,11 +70,12 @@ def run_detail(job_id: str):
         "discover_crawl": ["discover_crawl"],
         "browser_crawl": ["discover_crawl"],
         "design_compare": ["score_evaluator"],
+        "demo_video": ["demo_video"],
         "synthesis": ["synthesis"],
         "slack_delivery": ["slack"],
     }
 
-    plan = [
+    run_steps = [
         {
             "step_name": s["step_name"],
             "display_name": _STEP_DISPLAY_NAMES.get(s["step_name"], s["step_name"]),
@@ -90,7 +93,7 @@ def run_detail(job_id: str):
             "error": s.get("error"),
             "result_summary": s.get("result_summary"),
         }
-        for s in plan_steps
+        for s in steps
     ]
 
     # Results
@@ -150,7 +153,7 @@ def run_detail(job_id: str):
         "created_at": created_at.isoformat() if created_at else None,
         "completed_at": completed_at.isoformat() if completed_at else None,
         "duration_secs": duration_secs,
-        "run_steps": plan,
+        "run_steps": run_steps,
         "results": results,
         "token_usage": token_usage,
     }

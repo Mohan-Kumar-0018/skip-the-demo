@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
 from typing import Any, Callable
 
@@ -53,6 +54,83 @@ TRANSITION_MIN_GAP = 0.8  # minimum seconds between detected transitions
 TRANSITION_STABILITY_DELAY = 0.3  # seconds to wait and re-check that change persisted
 ACTION_SUBTITLE_MAX_DURATION = 2.5  # max subtitle display time
 ACTION_SUBTITLE_MIN_GAP = 0.3  # gap between consecutive subtitles
+
+
+# ─── Video loading helper ────────────────────────────────────────
+
+
+def _probe_video_duration(video_path: str) -> float | None:
+    """Probe video duration via ffprobe, with frame-counting fallback.
+
+    Playwright's webm recordings often omit duration metadata, causing
+    MoviePy/older ffmpeg to fail.  This uses ffprobe to recover the
+    duration independently.
+    """
+    # Attempt 1: direct format duration
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        dur = result.stdout.strip()
+        if dur and dur != "N/A":
+            return float(dur)
+    except (subprocess.SubprocessError, ValueError):
+        pass
+
+    # Attempt 2: count frames and compute from fps
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_read_frames,r_frame_rate",
+             "-of", "json", video_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        data = json.loads(result.stdout)
+        stream = data["streams"][0]
+        frames = int(stream["nb_read_frames"])
+        num, den = map(int, stream["r_frame_rate"].split("/"))
+        return frames / (num / den)
+    except (subprocess.SubprocessError, ValueError, KeyError, ZeroDivisionError):
+        pass
+
+    return None
+
+
+def _fix_video_metadata(video_path: str) -> str:
+    """Remux a video to embed correct duration metadata.
+
+    Uses ffprobe to discover the real duration, then remuxes with
+    ``-t <duration> -c copy`` so the container header is correct.
+    Returns the (same) path after in-place replacement.
+    """
+    duration = _probe_video_duration(video_path)
+    if duration is None:
+        raise OSError(f"Cannot determine duration of {video_path}")
+
+    fixed_path = video_path + ".fixed.webm"
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", video_path,
+         "-t", str(duration), "-c", "copy", fixed_path],
+        capture_output=True, check=True, timeout=120,
+    )
+    os.replace(fixed_path, video_path)
+    return video_path
+
+
+def _load_video_clip(video_path: str) -> VideoFileClip:
+    """Load a VideoFileClip, fixing missing duration metadata if needed."""
+    try:
+        return VideoFileClip(video_path)
+    except OSError as e:
+        if "duration" not in str(e).lower():
+            raise
+        logger.warning(
+            "Video missing duration metadata, remuxing to fix: %s", video_path,
+        )
+        _fix_video_metadata(video_path)
+        return VideoFileClip(video_path)
 
 
 # ─── Phase 1: Narration Script Generation ───────────────────────
@@ -556,7 +634,7 @@ def _pre_scan_video(video_path: str) -> dict:
 
     Runs BEFORE Phase 1 so Claude can anchor narration to real visual changes.
     """
-    video = VideoFileClip(video_path)
+    video = _load_video_clip(video_path)
     original_duration = video.duration
     transitions = _detect_transitions(video)
 
@@ -770,7 +848,7 @@ def _process_video(
             transitions, keep_segments, and deduped_duration_s.
     """
     original_action_log = bool(action_log)
-    video = VideoFileClip(video_path)
+    video = _load_video_clip(video_path)
     original_duration = video.duration
     w, h = video.size
 
@@ -1017,7 +1095,7 @@ async def generate_demo_video(
     # Get video duration for narration constraints
     video_duration_s = pre_scan["original_duration_s"] if pre_scan else None
     if video_duration_s is None:
-        probe_clip = VideoFileClip(video_path)
+        probe_clip = _load_video_clip(video_path)
         video_duration_s = probe_clip.duration
         probe_clip.close()
 
