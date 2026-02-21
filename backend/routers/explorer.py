@@ -11,13 +11,6 @@ from db.models import (
     get_run_browser_data_by_id,
     get_run_token_usage_by_id,
     get_run_plan_by_id,
-    list_runs,
-    list_run_steps,
-    list_run_results,
-    list_run_jira_data,
-    list_run_figma_data,
-    list_run_browser_data,
-    list_run_token_usage,
     list_run_plan,
 )
 
@@ -25,14 +18,6 @@ router = APIRouter(prefix="/api/explorer", tags=["explorer"])
 
 
 # ── Runs ─────────────────────────────────
-
-
-@router.get("/runs")
-def api_list_runs(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_runs(limit, offset)
 
 
 @router.get("/runs/{run_id}")
@@ -46,14 +31,6 @@ def api_get_run(run_id: str):
 # ── Run Steps ────────────────────────────
 
 
-@router.get("/run-steps")
-def api_list_run_steps(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_steps(limit, offset)
-
-
 @router.get("/run-steps/{step_id}")
 def api_get_run_step(step_id: int):
     row = get_run_step_by_id(step_id)
@@ -63,14 +40,6 @@ def api_get_run_step(step_id: int):
 
 
 # ── Run Results ──────────────────────────
-
-
-@router.get("/run-results")
-def api_list_run_results(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_results(limit, offset)
 
 
 @router.get("/run-results/{result_id}")
@@ -84,14 +53,6 @@ def api_get_run_result(result_id: int):
 # ── Run Jira Data ────────────────────────
 
 
-@router.get("/run-jira-data")
-def api_list_run_jira_data(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_jira_data(limit, offset)
-
-
 @router.get("/run-jira-data/{jira_id}")
 def api_get_run_jira_data(jira_id: int):
     row = get_run_jira_data_by_id(jira_id)
@@ -101,14 +62,6 @@ def api_get_run_jira_data(jira_id: int):
 
 
 # ── Run Figma Data ───────────────────────
-
-
-@router.get("/run-figma-data")
-def api_list_run_figma_data(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_figma_data(limit, offset)
 
 
 @router.get("/run-figma-data/{figma_id}")
@@ -122,14 +75,6 @@ def api_get_run_figma_data(figma_id: int):
 # ── Run Browser Data ─────────────────────
 
 
-@router.get("/run-browser-data")
-def api_list_run_browser_data(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_browser_data(limit, offset)
-
-
 @router.get("/run-browser-data/{browser_id}")
 def api_get_run_browser_data(browser_id: int):
     row = get_run_browser_data_by_id(browser_id)
@@ -139,14 +84,6 @@ def api_get_run_browser_data(browser_id: int):
 
 
 # ── Run Token Usage ──────────────────────
-
-
-@router.get("/run-token-usage")
-def api_list_run_token_usage(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    return list_run_token_usage(limit, offset)
 
 
 @router.get("/run-token-usage/{usage_id}")
