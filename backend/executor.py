@@ -16,6 +16,7 @@ from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
 from agents.demo_video_agent import generate_demo_video
 from agents.score_evaluator_agent import evaluate_scores
+from agents.step_summarizer_agent import generate_step_summary
 from db.models import (
     get_browser_data,
     get_figma_data,
@@ -28,6 +29,7 @@ from db.models import (
     save_token_usage,
     update_plan_step,
     update_run,
+    update_step_ai_summary,
 )
 from tools.kb_tools import get_knowledge
 from utils.adf_parser import adf_to_text
@@ -63,6 +65,112 @@ STEP_LABELS = {
     "synthesis": "Generating summary...",
     "slack_delivery": "Delivering to Slack...",
 }
+
+
+STEP_DISPLAY_NAMES = {
+    "jira_fetch": "Ticket Scout",
+    "prd_parse": "Doc Decoder",
+    "data_cleanup": "Data Polisher",
+    "figma_export": "Design Extractor",
+    "discover_crawl": "App Navigator",
+    "design_compare": "Pixel Judge",
+    "demo_video": "Demo Director",
+    "synthesis": "Story Weaver",
+    "slack_delivery": "Dispatch Runner",
+}
+
+
+def _gather_step_context(run_id: str, step_name: str) -> dict[str, Any]:
+    """Pull key facts from DB for the summarizer based on step type."""
+    ctx: dict[str, Any] = {}
+    if step_name == "jira_fetch":
+        jira = get_jira_data(run_id)
+        if jira:
+            raw_links = jira.get("design_links", [])
+            if isinstance(raw_links, str):
+                raw_links = json.loads(raw_links)
+            raw_attachments = jira.get("attachments", [])
+            if isinstance(raw_attachments, str):
+                raw_attachments = json.loads(raw_attachments)
+            ctx = {
+                "ticket_title": jira.get("ticket_title", ""),
+                "task_summary": jira.get("task_summary", ""),
+                "design_links_count": len(raw_links),
+                "attachments_count": len(raw_attachments),
+                "has_prd": any(
+                    (a.get("category") == "prd" if isinstance(a, dict) else False)
+                    for a in raw_attachments
+                ),
+            }
+    elif step_name == "figma_export":
+        figma = get_figma_data(run_id)
+        if figma:
+            raw_images = figma.get("exported_images", [])
+            if isinstance(raw_images, str):
+                raw_images = json.loads(raw_images)
+            raw_errors = figma.get("export_errors", [])
+            if isinstance(raw_errors, str):
+                raw_errors = json.loads(raw_errors)
+            ctx = {
+                "file_name": figma.get("file_name", ""),
+                "images_exported": len(raw_images),
+                "export_errors": len(raw_errors),
+            }
+    elif step_name == "discover_crawl":
+        browser = get_browser_data(run_id)
+        if browser:
+            raw_screenshots = browser.get("screenshot_paths", [])
+            if isinstance(raw_screenshots, str):
+                raw_screenshots = json.loads(raw_screenshots)
+            ctx = {
+                "screenshots_count": len(raw_screenshots),
+                "has_video": bool(browser.get("video_path")),
+            }
+    elif step_name == "design_compare":
+        out = get_step_output(run_id, "design_compare")
+        if out:
+            ctx = {
+                "overall_score": out.get("overall_score", 0),
+                "deviations_count": len(out.get("deviations", [])),
+                "summary_excerpt": (out.get("summary", "") or "")[:200],
+            }
+    elif step_name == "demo_video":
+        out = get_step_output(run_id, "demo_video")
+        if out:
+            stats = out.get("processing_stats", {})
+            ctx = {
+                "duration": stats.get("deduped_duration_s", 0),
+                "click_animations": stats.get("click_animations", 0),
+            }
+    elif step_name == "synthesis":
+        out = get_step_output(run_id, "synthesis")
+        if out:
+            ctx = {
+                "summary_length": len(out.get("summary", "")),
+                "has_release_notes": bool(out.get("release_notes")),
+            }
+    elif step_name == "slack_delivery":
+        out = get_step_output(run_id, "slack_delivery")
+        if out:
+            ctx = {"slack_sent": out.get("slack_sent", False)}
+    return ctx
+
+
+def _run_step_summarizer(
+    run_id: str, step_name: str, status: str,
+    result_summary: str | None, error: str | None,
+) -> None:
+    """Generate and save an AI summary for a completed step. Never raises."""
+    try:
+        display_name = STEP_DISPLAY_NAMES.get(step_name, step_name)
+        context = _gather_step_context(run_id, step_name)
+        ai_summary = generate_step_summary(
+            run_id, step_name, display_name, status,
+            result_summary, error, context or None,
+        )
+        update_step_ai_summary(run_id, step_name, ai_summary)
+    except Exception:
+        logger.warning("Step summarizer failed for %s/%s, skipping", run_id, step_name, exc_info=True)
 
 
 _panel_client = anthropic.Anthropic(max_retries=3)
@@ -137,6 +245,7 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
         result_summary = await handler(run_id, ticket_id, params)
 
         update_plan_step(run_id, step_name, "done", result_summary=result_summary)
+        _run_step_summarizer(run_id, step_name, "done", result_summary, None)
 
         # Update feature_name on run once after jira_fetch completes
         if step_name == "jira_fetch":
@@ -150,12 +259,14 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
         reason = str(e)
         logger.info("Step %s skipped for run %s: %s", step_name, run_id, reason)
         update_plan_step(run_id, step_name, "skipped", result_summary=reason)
+        _run_step_summarizer(run_id, step_name, "skipped", reason, None)
         return f"Skipped — {reason}"
 
     except Exception as e:
         error_msg = str(e)
         logger.exception("Step %s failed for run %s", step_name, run_id)
         update_plan_step(run_id, step_name, "failed", error=error_msg)
+        _run_step_summarizer(run_id, step_name, "failed", None, error_msg)
 
         if step_name in CRITICAL_STEPS:
             raise

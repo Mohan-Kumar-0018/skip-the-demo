@@ -434,6 +434,15 @@ def get_run_steps(run_id: str) -> list[dict[str, Any]]:
             return [dict(r) for r in cur.fetchall()]
 
 
+def update_step_ai_summary(run_id: str, step_name: str, ai_summary: str) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE run_steps SET ai_summary = %s WHERE run_id = %s AND step_name = %s",
+                (ai_summary, run_id, step_name),
+            )
+
+
 # ── PLAN ─────────────────────────────────
 
 
@@ -496,6 +505,7 @@ def get_plan(run_id: str) -> list[dict[str, Any]]:
                 "depends_on": step.get("depends_on", []),
                 "status": "pending",
                 "result_summary": None,
+                "ai_summary": None,
                 "error": None,
                 "started_at": None,
                 "completed_at": None,

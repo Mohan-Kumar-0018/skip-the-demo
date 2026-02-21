@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS run_steps (
     depends_on      VARCHAR(100)[]  DEFAULT '{}',
     status          VARCHAR(50)     DEFAULT 'pending',
     result_summary  TEXT,
+    ai_summary      TEXT,
     error           TEXT,
     started_at      TIMESTAMP,
     completed_at    TIMESTAMP,

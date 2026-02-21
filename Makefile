@@ -22,6 +22,10 @@ db-reset:
 	rm -rf backend/outputs/*/
 	> backend/pipeline.log
 
+## Add new columns to existing DB (non-destructive)
+db-migrate:
+	psql $(DB_URL) -c "ALTER TABLE run_steps ADD COLUMN IF NOT EXISTS ai_summary TEXT;"
+
 ## Install Python deps + Playwright browser
 install:
 	$(ACTIVATE) && pip install -r ../requirements.txt && playwright install chromium

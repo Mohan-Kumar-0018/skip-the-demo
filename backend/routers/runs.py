@@ -102,6 +102,7 @@ def run_detail(job_id: str, request: Request):
             ),
             "error": s.get("error"),
             "result_summary": s.get("result_summary"),
+            "ai_summary": s.get("ai_summary"),
         }
         for s in steps
     ]
@@ -214,6 +215,7 @@ def step_detail(job_id: str, step_name: str, request: Request):
         "duration_secs": duration_secs,
         "error": step.get("error"),
         "result_summary": step.get("result_summary"),
+        "ai_summary": step.get("ai_summary"),
         "started_at": (
             step["started_at"].isoformat() if step.get("started_at") else None
         ),
