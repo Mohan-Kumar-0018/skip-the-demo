@@ -86,6 +86,7 @@ db-reset:
 	psql $(DB_URL) -c "DROP TABLE IF EXISTS run_step_outputs, run_plan, run_token_usage, run_browser_data, run_figma_data, run_jira_data, run_results, run_steps, runs CASCADE;"
 	psql $(DB_URL) -f backend/db/schema.sql
 	rm -rf backend/outputs/*/
+	rm -f backend/pipeline.log
 
 ## Install Python deps + Playwright browser
 install:

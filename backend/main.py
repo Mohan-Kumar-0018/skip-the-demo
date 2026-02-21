@@ -6,9 +6,20 @@ import json
 import os
 import uuid
 
+import logging
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("pipeline.log"),
+    ],
+)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

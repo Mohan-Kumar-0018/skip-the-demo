@@ -36,6 +36,25 @@ logger = logging.getLogger(__name__)
 # Steps that abort the whole pipeline on failure
 CRITICAL_STEPS = {"jira_fetch", "browser_crawl"}
 
+
+class StepValidationError(Exception):
+    """Raised when a critical step produces empty/invalid results."""
+
+
+def _validate_jira_result(jira_data: dict) -> None:
+    ticket = jira_data.get("ticket", {})
+    if not ticket.get("title"):
+        raise StepValidationError("Jira agent returned no ticket title")
+
+
+def _validate_browser_result(browser_data: dict) -> None:
+    urls = browser_data.get("urls_visited") or []
+    screenshots = browser_data.get("screenshot_paths") or []
+    if not urls and not screenshots:
+        raise StepValidationError(
+            "Browser agent returned no URLs visited and no screenshots"
+        )
+
 # Progress percentages for each step
 STEP_PROGRESS = {
     "jira_fetch": (5, 15),
@@ -127,6 +146,7 @@ def _save_usage(run_id: str, agent_name: str, result: dict[str, Any]) -> None:
 
 
 async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] jira_fetch: starting for ticket %s", run_id, ticket_id)
     task = (
         f"Fetch all details for Jira ticket {ticket_id} including subtasks, "
         f"comments, and all attachments. Save attachments to outputs/{run_id}/prd/."
@@ -135,7 +155,9 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     _save_usage(run_id, "jira", result)
 
     jira_data = result["data"]
+    _validate_jira_result(jira_data)
     ticket = jira_data.get("ticket", {})
+    logger.info("[%s] jira_fetch: got ticket '%s', %d attachments, %d subtasks", run_id, ticket.get("title", ""), len(jira_data.get("attachments", [])), len(jira_data.get("subtasks", [])))
 
     # Extract PRD text from PDF attachments
     prd_text = ""
@@ -295,6 +317,7 @@ async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
 
 
 async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] browser_crawl: starting", run_id)
     # Get staging URL from params, Jira data, or KB
     staging_url = params.get("staging_url", "")
 
@@ -357,6 +380,8 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     _save_usage(run_id, "browser", result)
 
     browser_data = result["data"]
+    _validate_browser_result(browser_data)
+    logger.info("[%s] browser_crawl: visited %d URLs, %d screenshots, video=%s", run_id, len(browser_data.get("urls_visited", [])), len(browser_data.get("screenshot_paths", [])), bool(browser_data.get("video_path")))
     save_browser_data(run_id, {
         "urls_visited": browser_data.get("urls_visited", []),
         "page_titles": browser_data.get("page_titles", []),
@@ -389,6 +414,7 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
 
 
 async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] design_compare: starting", run_id)
     # Find design image: prefer Figma export, fallback to Jira attachment
     design_path = None
 
@@ -428,8 +454,13 @@ async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
     with open(design_path, "rb") as f:
         design_bytes = f.read()
 
-    result = compare_design_vs_reality(design_bytes, screenshots)
+    try:
+        result = compare_design_vs_reality(design_bytes, screenshots)
+    except Exception:
+        logger.exception("[%s] design_compare: vision agent failed", run_id)
+        raise
 
+    logger.info("[%s] design_compare: score=%s, deviations=%d", run_id, result.get("score"), len(result.get("deviations", [])))
     save_step_output(run_id, "design_compare", {
         "design_score": result["score"],
         "deviations": result["deviations"],
@@ -449,6 +480,7 @@ async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
 
 
 async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] synthesis: starting", run_id)
     # Read inputs from DB
     jira_out = get_step_output(run_id, "jira_fetch")
     feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
@@ -461,8 +493,13 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
         "summary": "",
     }
 
-    result = generate_pm_summary(feature_name, prd_text, design_result)
+    try:
+        result = generate_pm_summary(feature_name, prd_text, design_result)
+    except Exception:
+        logger.exception("[%s] synthesis: agent failed", run_id)
+        raise
 
+    logger.info("[%s] synthesis: summary=%d chars, release_notes=%d chars", run_id, len(result.get("summary", "")), len(result.get("release_notes", "")))
     save_step_output(run_id, "synthesis", {
         "summary": result["summary"],
         "release_notes": result["release_notes"],

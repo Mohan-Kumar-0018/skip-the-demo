@@ -51,6 +51,8 @@ async def run_agent_loop(
     total_input_tokens = 0
     total_output_tokens = 0
 
+    logger.info("Agent start: model=%s, max_turns=%d, prompt=%s", use_model, max_turns, user_message[:300])
+
     for turn in range(max_turns):
         response = client.messages.create(
             model=use_model,
@@ -102,10 +104,12 @@ async def run_agent_loop(
             "cost_usd": calc_cost(use_model, total_input_tokens, total_output_tokens),
         }
         text = "\n".join(text_parts) if text_parts else ""
+        logger.info("Agent done: turns=%d, tokens=%d/%d, response=%s", turn + 1, total_input_tokens, total_output_tokens, text[:200])
         return {"text": text, "usage": usage}
 
     # Safety: if we hit max_turns, return whatever we have
-    logger.warning("Agent hit max_turns (%d) safety limit", max_turns)
+    last_prompt = str(messages[-1].get("content", ""))[:200] if messages else ""
+    logger.warning("Agent hit max_turns (%d) safety limit, last_prompt=%s", max_turns, last_prompt)
     usage = {
         "model": MODEL,
         "input_tokens": total_input_tokens,

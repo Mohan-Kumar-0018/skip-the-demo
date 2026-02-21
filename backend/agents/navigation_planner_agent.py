@@ -163,8 +163,13 @@ def plan_navigation(
     )
 
     text = response.content[0].text
+    logger.info("Nav planner response: %d chars", len(text))
     clean = text.replace("```json", "").replace("```", "").strip()
-    parsed = json.loads(clean)
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        logger.error("Nav planner returned invalid JSON: %s", clean[:300])
+        raise ValueError(f"Nav planner returned invalid JSON: {clean[:200]}") from exc
 
     parsed["usage"] = {
         "model": model,

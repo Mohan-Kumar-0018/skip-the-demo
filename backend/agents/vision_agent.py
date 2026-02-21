@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from typing import Any
 
 import anthropic
 
 from agent_runner import calc_cost
+
+logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(max_retries=5)
 
@@ -24,6 +27,7 @@ def _b64_bytes(data: bytes) -> str:
 def compare_design_vs_reality(
     design_bytes: bytes, screenshots: list[str]
 ) -> dict[str, Any]:
+    logger.info("Vision compare: %d design bytes, %d screenshots", len(design_bytes), len(screenshots))
     design_b64 = _b64_bytes(design_bytes)
     actual_b64 = _b64(screenshots[0])
 
@@ -75,8 +79,13 @@ def compare_design_vs_reality(
     )
 
     text = response.content[0].text
+    logger.info("Vision agent response: %d chars", len(text))
     clean = text.replace("```json", "").replace("```", "").strip()
-    parsed = json.loads(clean)
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        logger.error("Vision agent returned invalid JSON: %s", clean[:300])
+        raise ValueError(f"Vision agent returned invalid JSON: {clean[:200]}") from exc
     parsed["usage"] = {
         "model": model,
         "input_tokens": response.usage.input_tokens,
