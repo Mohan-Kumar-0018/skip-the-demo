@@ -50,6 +50,18 @@ _STEP_AGENT_DATA = {
     "browser_crawl": get_browser_data,
 }
 
+# step_name → agent_name(s) used in save_token_usage calls
+_STEP_AGENT_NAMES = {
+    "jira_fetch": ["jira", "panel_resolver"],
+    "figma_export": ["figma"],
+    "discover_crawl": ["discover_crawl"],
+    "browser_crawl": ["discover_crawl"],
+    "design_compare": ["score_evaluator"],
+    "demo_video": ["demo_video"],
+    "synthesis": ["synthesis"],
+    "slack_delivery": ["slack"],
+}
+
 
 @router.get("/")
 def runs_list():
@@ -72,18 +84,6 @@ def run_detail(job_id: str, request: Request):
     for row in get_token_usage(job_id):
         name = row.get("agent_name", "")
         agent_costs[name] = agent_costs.get(name, 0) + (row.get("cost_usd") or 0)
-
-    # step_name → agent_name(s) used in save_token_usage calls
-    _STEP_AGENT_NAMES = {
-        "jira_fetch": ["jira", "panel_resolver"],
-        "figma_export": ["figma"],
-        "discover_crawl": ["discover_crawl"],
-        "browser_crawl": ["discover_crawl"],
-        "design_compare": ["score_evaluator"],
-        "demo_video": ["demo_video"],
-        "synthesis": ["synthesis"],
-        "slack_delivery": ["slack"],
-    }
 
     run_steps = [
         {
@@ -207,12 +207,25 @@ def step_detail(job_id: str, step_name: str, request: Request):
                 _to_absolute_url(request, p) for p in paths
             ]
 
+    # Token usage for this step
+    agent_names = _STEP_AGENT_NAMES.get(step_name, [])
+    step_tokens = [
+        r for r in get_token_usage(job_id)
+        if r.get("agent_name") in agent_names
+    ]
+    total_cost_usd = round(sum(r.get("cost_usd") or 0 for r in step_tokens), 4)
+    total_input_tokens = sum(r.get("input_tokens") or 0 for r in step_tokens)
+    total_output_tokens = sum(r.get("output_tokens") or 0 for r in step_tokens)
+
     return {
         "step_name": step["step_name"],
         "display_name": _STEP_DISPLAY_NAMES.get(step_name, step_name),
         "agent": step.get("agent"),
         "status": step.get("status"),
         "duration_secs": duration_secs,
+        "total_cost_usd": total_cost_usd,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
         "error": step.get("error"),
         "result_summary": step.get("result_summary"),
         "ai_summary": step.get("ai_summary"),
