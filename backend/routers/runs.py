@@ -78,7 +78,10 @@ def run_detail(job_id: str):
                 if results_row.get("video_path")
                 else None
             ),
-            "screenshots": screenshots,
+            "screenshots": [
+                f"/{s}" if not s.startswith("/") else s
+                for s in screenshots
+            ],
             "slack_sent": bool(results_row.get("slack_sent")),
         }
 
@@ -142,6 +145,14 @@ def step_detail(job_id: str, step_name: str):
     if agent_data:
         for key in ("id", "run_id", "created_at"):
             agent_data.pop(key, None)
+        # Normalize screenshot paths to absolute
+        if "screenshot_paths" in agent_data:
+            paths = agent_data["screenshot_paths"] or []
+            if isinstance(paths, str):
+                paths = json.loads(paths)
+            agent_data["screenshot_paths"] = [
+                f"/{p}" if not p.startswith("/") else p for p in paths
+            ]
 
     return {
         "step_name": step["step_name"],

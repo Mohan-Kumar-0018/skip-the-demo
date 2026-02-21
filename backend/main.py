@@ -334,10 +334,19 @@ def agent_data(job_id: str):
     jira = get_jira_data(job_id)
     figma = get_figma_data(job_id)
     browser = get_browser_data(job_id)
+    browser_dict = None
+    if browser:
+        browser_dict = dict(browser)
+        paths = browser_dict.get("screenshot_paths") or []
+        if isinstance(paths, str):
+            paths = json.loads(paths)
+        browser_dict["screenshot_paths"] = [
+            f"/{p}" if not p.startswith("/") else p for p in paths
+        ]
     return {
         "jira": dict(jira) if jira else None,
         "figma": dict(figma) if figma else None,
-        "browser": dict(browser) if browser else None,
+        "browser": browser_dict,
     }
 
 
