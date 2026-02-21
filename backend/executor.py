@@ -43,6 +43,10 @@ class StepValidationError(Exception):
     """Raised when a critical step produces empty/invalid results."""
 
 
+class SkipStep(Exception):
+    """Raised by a handler to signal the step should be marked as skipped."""
+
+
 def _validate_jira_result(jira_data: dict) -> None:
     ticket = jira_data.get("ticket", {})
     if not ticket.get("title"):
@@ -128,9 +132,7 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
     try:
         handler = _STEP_HANDLERS.get(step_name)
         if handler is None:
-            logger.warning("No handler for step %s, skipping", step_name)
-            update_plan_step(run_id, step_name, "skipped", result_summary="No handler")
-            return "No handler"
+            raise SkipStep("No handler")
 
         result_summary = await handler(run_id, ticket_id, params)
 
@@ -143,6 +145,12 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
                 update_run(run_id, label, 0, feature_name=jira_out["feature_name"])
 
         return result_summary
+
+    except SkipStep as e:
+        reason = str(e)
+        logger.info("Step %s skipped for run %s: %s", step_name, run_id, reason)
+        update_plan_step(run_id, step_name, "skipped", result_summary=reason)
+        return f"Skipped — {reason}"
 
     except Exception as e:
         error_msg = str(e)
@@ -283,8 +291,7 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
             design_links = raw
 
     if not design_links:
-        update_plan_step(run_id, "figma_export", "skipped", result_summary="No Figma links found")
-        return "Skipped — no Figma links"
+        raise SkipStep("No Figma links found")
 
     all_exported: list[dict] = []
     all_errors: list[dict] = []
@@ -419,7 +426,7 @@ async def _execute_score_evaluator(run_id: str, ticket_id: str, params: dict) ->
             "summary": "Skipped — no design files or no screenshots",
             "additional_analysis": {},
         })
-        return "Skipped — no design files or no screenshots"
+        raise SkipStep("No design files or no screenshots")
 
     try:
         result = evaluate_scores(screenshots_dir, figma_dir)

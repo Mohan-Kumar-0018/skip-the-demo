@@ -166,8 +166,8 @@ async def run_discover_crawl_pipeline(
             "slack_sent": False,
         }
 
-        screenshots_dir = "outputs/uat_screenshots/screenshots"
-        video_dir = "outputs/uat_screenshots/video"
+        screenshots_dir = f"outputs/{run_id}/screenshots"
+        video_dir = f"outputs/{run_id}/video"
         if os.path.isdir(screenshots_dir):
             collected["screenshots"] = [
                 f"{screenshots_dir}/{f}"

@@ -123,9 +123,9 @@ async def run_agent_loop(
     last_prompt = str(messages[-1].get("content", "")) if verbose else (str(messages[-1].get("content", ""))[:200] if messages else "")
     logger.warning("Agent hit max_turns (%d) safety limit, last_prompt=%s", max_turns, last_prompt)
     usage = {
-        "model": MODEL,
+        "model": use_model,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
-        "cost_usd": calc_cost(MODEL, total_input_tokens, total_output_tokens),
+        "cost_usd": calc_cost(use_model, total_input_tokens, total_output_tokens),
     }
     return {"text": "Agent reached maximum number of turns without completing.", "usage": usage}
