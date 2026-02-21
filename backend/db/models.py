@@ -58,7 +58,7 @@ def fail_run(run_id: str, error: str) -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE runs SET status='failed', stage=%s WHERE id=%s",
+                "UPDATE runs SET status='failed', stage=%s, completed_at=NOW() WHERE id=%s",
                 (f"Error: {error}", run_id),
             )
 
