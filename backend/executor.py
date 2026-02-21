@@ -6,6 +6,9 @@ import os
 import re
 from typing import Any
 
+import anthropic
+
+from agent_runner import calc_cost
 from agents.browser_agent import run_browser_agent
 from agents.figma_agent import run_figma_agent
 from agents.jira_agent import run_jira_agent
@@ -27,7 +30,7 @@ from db.models import (
     update_run,
     update_step_status,
 )
-from tools.kb_tools import get_knowledge, search_knowledge
+from tools.kb_tools import get_knowledge
 from utils.adf_parser import adf_to_text
 from utils.pdf_parser import extract_text
 
@@ -79,6 +82,56 @@ STEP_LABELS = {
     "synthesis": "Generating summary...",
     "slack_delivery": "Delivering to Slack...",
 }
+
+
+_panel_client = anthropic.Anthropic(max_retries=3)
+
+
+def _resolve_panel(run_id: str, context_texts: list[str]) -> str | None:
+    """Use a lightweight Claude call to identify which KB panel the context refers to."""
+    urls = get_knowledge("staging_urls")
+    if not isinstance(urls, dict) or "error" in urls:
+        return None
+    kb_keys = list(urls.keys())
+    if not kb_keys:
+        return None
+
+    context = "\n---\n".join(t[:500] for t in context_texts if t)
+    if not context.strip():
+        return None
+
+    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+    try:
+        response = _panel_client.messages.create(
+            model=model,
+            max_tokens=50,
+            temperature=0,
+            messages=[{"role": "user", "content": (
+                f"Available staging app keys: {', '.join(kb_keys)}\n\n"
+                f"Context from a Jira ticket:\n{context}\n\n"
+                "Which key does this context refer to? "
+                "Return ONLY JSON: {\"key\": \"the-key\"} or {\"key\": null} if ambiguous."
+            )}],
+        )
+    except Exception as e:
+        logger.warning("[%s] panel resolver failed: %s", run_id, e)
+        return None
+
+    save_token_usage(
+        run_id, "panel_resolver", model,
+        response.usage.input_tokens, response.usage.output_tokens,
+        calc_cost(model, response.usage.input_tokens, response.usage.output_tokens),
+    )
+
+    text = response.content[0].text.strip()
+    try:
+        parsed = json.loads(text.replace("```json", "").replace("```", "").strip())
+        key = parsed.get("key")
+        if key and key in kb_keys:
+            return key
+    except (json.JSONDecodeError, AttributeError):
+        logger.warning("[%s] panel resolver returned unparseable: %s", run_id, text[:100])
+    return None
 
 
 async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
@@ -203,10 +256,18 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
         "pending_subtasks": pending,
     })
 
+    # Resolve which staging panel this ticket refers to
+    panel_texts = [desc_str, ticket.get("title", "")]
+    panel_texts.extend(c.get("body", "") for c in jira_data.get("comments", []))
+    detected_panel = _resolve_panel(run_id, panel_texts)
+    if detected_panel:
+        logger.info("[%s] jira_fetch: detected panel '%s'", run_id, detected_panel)
+
     feature_name = ticket.get("title", ticket_id)
     save_step_output(run_id, "jira_fetch", {
         "feature_name": feature_name,
         "prd_text": prd_text,
+        "detected_panel": detected_panel,
     })
 
     return result["summary"]
@@ -286,6 +347,12 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     logger.info("[%s] figma_export: %d images exported from %d links, %d errors",
                 run_id, len(all_exported), len(design_links), len(all_errors))
 
+    # Resolve which staging panel the Figma designs refer to
+    figma_texts = [primary_file_info.get("name", ""), primary_node_info.get("name", "")]
+    detected_panel = _resolve_panel(run_id, figma_texts)
+    if detected_panel:
+        logger.info("[%s] figma_export: detected panel '%s'", run_id, detected_panel)
+
     save_figma_data(run_id, {
         "figma_url": primary_url,
         "file_name": primary_file_info.get("name", ""),
@@ -293,6 +360,10 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
         "node_name": primary_node_info.get("name", ""),
         "exported_images": all_exported,
         "export_errors": all_errors,
+    })
+
+    save_step_output(run_id, "figma_export", {
+        "detected_panel": detected_panel,
     })
 
     return f"Exported {len(all_exported)} images from {len(design_links)} Figma links"
@@ -335,25 +406,37 @@ async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
 
 async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     logger.info("[%s] browser_crawl: starting", run_id)
-    # Get staging URL from params, Jira data, or KB
     staging_url = params.get("staging_url", "")
+    kb_entry: dict | None = None
+    url_source = ""
 
+    # 1. Planner params
+    if staging_url:
+        url_source = "planner params"
+
+    # 2. Jira custom field
     if not staging_url:
         jira = get_jira_data(run_id)
-        if jira:
-            staging_url = jira.get("staging_url", "")
+        if jira and jira.get("staging_url"):
+            staging_url = jira["staging_url"]
+            url_source = "jira custom field"
 
+    # 3. Detected panel from upstream steps (jira / figma)
     if not staging_url:
-        # Try KB lookup
-        project_key = ticket_id.split("-")[0].lower() if "-" in ticket_id else ""
-        if project_key:
-            kb_results = search_knowledge(project_key)
-            for hit in kb_results:
-                if hit.get("category") == "staging_urls":
-                    data = hit.get("data", {})
-                    if isinstance(data, dict) and "url" in data:
-                        staging_url = data["url"]
-                        break
+        detected_panel = None
+        jira_out = get_step_output(run_id, "jira_fetch")
+        if jira_out:
+            detected_panel = jira_out.get("detected_panel")
+        if not detected_panel:
+            figma_out = get_step_output(run_id, "figma_export")
+            if figma_out:
+                detected_panel = figma_out.get("detected_panel")
+        if detected_panel:
+            entry = get_knowledge("staging_urls", detected_panel)
+            if isinstance(entry, dict) and "url" in entry:
+                staging_url = entry["url"]
+                kb_entry = {"key": detected_panel, **entry}
+                url_source = f"detected panel: {detected_panel}"
 
     if not staging_url:
         raise StepValidationError(
@@ -361,15 +444,25 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
             "Add a staging URL to the Jira ticket or knowledge base before running the pipeline."
         )
 
-    # Build credentials text from KB
+    logger.info("[%s] browser_crawl: resolved URL via %s -> %s", run_id, url_source, staging_url)
+
+    # Build credentials — prefer per-entry creds from KB match
     creds_text = ""
-    creds = get_knowledge("credentials")
-    if isinstance(creds, dict) and "error" not in creds:
-        staging_creds = creds.get("staging")
-        if isinstance(staging_creds, dict):
-            creds_text = "\n\nLogin credentials:\n" + "\n".join(
-                f"  {k}: {v}" for k, v in staging_creds.items()
-            )
+    if kb_entry and (kb_entry.get("phone") or kb_entry.get("password")):
+        parts = []
+        if kb_entry.get("phone"):
+            parts.append(f"  phone: {kb_entry['phone']}")
+        if kb_entry.get("password"):
+            parts.append(f"  password: {kb_entry['password']}")
+        creds_text = "\n\nLogin credentials:\n" + "\n".join(parts)
+    else:
+        creds = get_knowledge("credentials")
+        if isinstance(creds, dict) and "error" not in creds:
+            staging_creds = creds.get("staging")
+            if isinstance(staging_creds, dict):
+                creds_text = "\n\nLogin credentials:\n" + "\n".join(
+                    f"  {k}: {v}" for k, v in staging_creds.items()
+                )
 
     # Build navigation guidance from nav_plan if available
     nav_guidance = ""
