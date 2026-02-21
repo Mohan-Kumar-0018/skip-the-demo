@@ -355,6 +355,12 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
                         staging_url = data["url"]
                         break
 
+    if not staging_url:
+        raise StepValidationError(
+            "No staging URL found — checked Jira ticket, step params, and knowledge base. "
+            "Add a staging URL to the Jira ticket or knowledge base before running the pipeline."
+        )
+
     # Build credentials text from KB
     creds_text = ""
     creds = get_knowledge("credentials")

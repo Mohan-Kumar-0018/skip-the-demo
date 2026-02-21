@@ -4,6 +4,7 @@ import json
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from playwright.async_api import Browser, Page, async_playwright, Playwright
 
@@ -40,10 +41,30 @@ def _log_action(
     session["action_log"].append(entry)
 
 
+def _get_origin(url: str) -> str:
+    """Extract scheme + netloc from a URL (e.g. 'https://app.example.com:8080')."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
-    """Open a URL in the browser WITHOUT video recording. Call start_recording later to begin recording."""
+    """Open a URL in the browser WITHOUT video recording. Call start_recording later to begin recording.
+
+    The first URL sets the allowed origin for the session. All subsequent
+    navigate_to_url calls must stay within the same origin (scheme + host + port).
+    """
     output_dir = f"outputs/{job_id}"
     os.makedirs(output_dir, exist_ok=True)
+
+    # Validate URL against allowed origin
+    if job_id in _sessions:
+        allowed_origin = _sessions[job_id].get("allowed_origin", "")
+        request_origin = _get_origin(url)
+        if allowed_origin and request_origin != allowed_origin:
+            return {
+                "status": "error",
+                "message": f"Navigation blocked: {url} is outside the allowed origin ({allowed_origin}). Only navigate within the staging application.",
+            }
 
     if job_id not in _sessions:
         pw: Playwright = await async_playwright().start()
@@ -59,6 +80,7 @@ async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
             "page": page,
             "output_dir": output_dir,
             "screenshot_count": 0,
+            "allowed_origin": _get_origin(url),
         }
     else:
         page = _sessions[job_id]["page"]
