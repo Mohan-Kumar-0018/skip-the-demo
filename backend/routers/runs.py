@@ -18,6 +18,18 @@ from db.models import (
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
+_STEP_DISPLAY_NAMES = {
+    "jira_fetch": "Ticket Scout",
+    "prd_parse": "Doc Decoder",
+    "data_cleanup": "Data Polisher",
+    "figma_export": "Design Extractor",
+    "discover_crawl": "App Navigator",
+    "browser_crawl": "App Navigator",
+    "design_compare": "Pixel Judge",
+    "synthesis": "Story Weaver",
+    "slack_delivery": "Dispatch Runner",
+}
+
 # Step name → agent data fetcher
 _STEP_AGENT_DATA = {
     "jira_fetch": get_jira_data,
@@ -42,15 +54,38 @@ def run_detail(job_id: str):
 
     # Plan timeline
     plan_steps = get_plan(job_id)
+
+    # Build agent_name → cost lookup from token usage
+    agent_costs = {}
+    for row in get_token_usage(job_id):
+        name = row.get("agent_name", "")
+        agent_costs[name] = agent_costs.get(name, 0) + (row.get("cost_usd") or 0)
+
+    # step_name → agent_name(s) used in save_token_usage calls
+    _STEP_AGENT_NAMES = {
+        "jira_fetch": ["jira", "panel_resolver"],
+        "figma_export": ["figma"],
+        "discover_crawl": ["discover_crawl"],
+        "browser_crawl": ["discover_crawl"],
+        "design_compare": ["score_evaluator"],
+        "synthesis": ["synthesis"],
+        "slack_delivery": ["slack"],
+    }
+
     plan = [
         {
             "step_name": s["step_name"],
+            "display_name": _STEP_DISPLAY_NAMES.get(s["step_name"], s["step_name"]),
             "agent": s.get("agent"),
             "status": s.get("status"),
             "duration_secs": (
                 int((s["completed_at"] - s["started_at"]).total_seconds())
                 if s.get("completed_at") and s.get("started_at")
                 else None
+            ),
+            "cost_usd": round(
+                sum(agent_costs.get(a, 0) for a in _STEP_AGENT_NAMES.get(s["step_name"], [])),
+                4,
             ),
             "error": s.get("error"),
             "result_summary": s.get("result_summary"),
