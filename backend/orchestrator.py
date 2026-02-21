@@ -20,16 +20,6 @@ from tools.kb_tools import get_knowledge
 
 logger = logging.getLogger(__name__)
 
-STEPS = [
-    "jira_fetch",
-    "prd_parse",
-    "figma_export",
-    "discover_crawl",
-    "design_compare",
-    "synthesis",
-    "slack_delivery",
-]
-
 
 async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
     """Standalone browser crawl — looks up KB for URL/creds, then runs browser agent."""

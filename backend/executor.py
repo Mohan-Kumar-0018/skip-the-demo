@@ -49,23 +49,9 @@ def _validate_jira_result(jira_data: dict) -> None:
         raise StepValidationError("Jira agent returned no ticket title")
 
 
-# Progress percentages for each step
-STEP_PROGRESS = {
-    "jira_fetch": (5, 15),
-    "prd_parse": (15, 20),
-    "figma_export": (20, 28),
-    "discover_crawl": (20, 60),
-    "design_compare": (60, 72),
-    "demo_video": (60, 72),
-    "synthesis": (72, 88),
-    "slack_delivery": (88, 98),
-}
-
 
 STEP_LABELS = {
     "jira_fetch": "Fetching Jira ticket...",
-    "data_cleanup": "Cleaning up ticket data...",
-    "prd_parse": "Parsing PRD...",
     "figma_export": "Exporting Figma designs...",
     "discover_crawl": "Discovering and crawling app...",
     "design_compare": "Comparing designs...",
@@ -150,10 +136,11 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
 
         update_plan_step(run_id, step_name, "done", result_summary=result_summary)
 
-        # Update feature_name on run if jira provided it
-        jira_out = get_step_output(run_id, "jira_fetch")
-        if jira_out and jira_out.get("feature_name"):
-            update_run(run_id, label, 0, feature_name=jira_out["feature_name"])
+        # Update feature_name on run once after jira_fetch completes
+        if step_name == "jira_fetch":
+            jira_out = get_step_output(run_id, "jira_fetch")
+            if jira_out and jira_out.get("feature_name"):
+                update_run(run_id, label, 0, feature_name=jira_out["feature_name"])
 
         return result_summary
 
@@ -285,41 +272,6 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     return result["summary"]
 
 
-async def _execute_data_cleanup(run_id: str, ticket_id: str, params: dict) -> str:
-    jira = get_jira_data(run_id)
-    if not jira:
-        return "No Jira data to clean"
-
-    raw_desc = jira.get("ticket_description", "")
-    if not raw_desc:
-        return "No ticket description to clean"
-
-    cleaned = adf_to_text(raw_desc)
-
-    # Write back only the cleaned description
-    jira["ticket_description"] = cleaned
-    save_jira_data(run_id, jira)
-
-    return f"Cleaned ticket description ({len(cleaned)} chars)"
-
-
-async def _execute_prd_parse(run_id: str, ticket_id: str, params: dict) -> str:
-    jira_out = get_step_output(run_id, "jira_fetch")
-    prd_text = jira_out.get("prd_text", "") if jira_out else ""
-
-    if not prd_text:
-        jira = get_jira_data(run_id)
-        prd_text = jira.get("ticket_description", "") if jira else ""
-        if prd_text:
-            save_step_output(run_id, "prd_parse", {"prd_text": prd_text})
-            return f"No PRD found, using ticket description ({len(prd_text)} chars)"
-        save_step_output(run_id, "prd_parse", {"prd_text": ""})
-        return "No PRD text or ticket description found"
-
-    save_step_output(run_id, "prd_parse", {"prd_text": prd_text})
-    return f"PRD text available ({len(prd_text)} chars)"
-
-
 async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     jira = get_jira_data(run_id)
     design_links = []
@@ -359,12 +311,6 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     logger.info("[%s] figma_export: %d images exported from %d links, %d errors",
                 run_id, len(all_exported), len(design_links), len(all_errors))
 
-    # Resolve which staging panel the Figma designs refer to
-    figma_texts = [primary_file_info.get("name", ""), primary_node_info.get("name", "")]
-    detected_panel = _resolve_panel(run_id, figma_texts)
-    if detected_panel:
-        logger.info("[%s] figma_export: detected panel '%s'", run_id, detected_panel)
-
     save_figma_data(run_id, {
         "figma_url": primary_url,
         "file_name": primary_file_info.get("name", ""),
@@ -374,46 +320,20 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
         "export_errors": all_errors,
     })
 
-    save_step_output(run_id, "figma_export", {
-        "detected_panel": detected_panel,
-    })
-
     return f"Exported {len(all_exported)} images from {len(design_links)} Figma links"
 
 
 async def _execute_discover_crawl(run_id: str, ticket_id: str, params: dict) -> str:
     logger.info("[%s] discover_crawl: starting", run_id)
 
-    # Resolve kb_key from upstream steps
-    kb_key: str | None = None
-
-    # 1. Check detected_panel from jira_fetch
+    # jira_fetch is critical and always sets detected_panel (or aborts)
     jira_out = get_step_output(run_id, "jira_fetch")
-    if jira_out:
-        kb_key = jira_out.get("detected_panel")
-
-    # 2. Check detected_panel from figma_export
-    if not kb_key:
-        figma_out = get_step_output(run_id, "figma_export")
-        if figma_out:
-            kb_key = figma_out.get("detected_panel")
-
-    # 3. Try to find KB entry by matching staging URL from Jira data
-    if not kb_key:
-        jira = get_jira_data(run_id)
-        staging_url = jira.get("staging_url", "") if jira else ""
-        if staging_url:
-            all_urls = get_knowledge("staging_urls")
-            if isinstance(all_urls, dict) and "error" not in all_urls:
-                for key, entry in all_urls.items():
-                    if isinstance(entry, dict) and entry.get("url") == staging_url:
-                        kb_key = key
-                        break
+    kb_key = jira_out.get("detected_panel") if jira_out else None
 
     if not kb_key:
         raise StepValidationError(
-            "No staging panel found — checked Jira ticket, Figma export, and knowledge base. "
-            "Add a staging URL to the Jira ticket or knowledge base before running the pipeline."
+            "No staging panel found — jira_fetch should have resolved this. "
+            "Ensure the ticket has a staging URL or recognizable panel reference."
         )
 
     logger.info("[%s] discover_crawl: resolved kb_key=%s", run_id, kb_key)
@@ -725,8 +645,6 @@ async def _execute_slack(run_id: str, ticket_id: str, params: dict) -> str:
 
 _STEP_HANDLERS = {
     "jira_fetch": _execute_jira,
-    "data_cleanup": _execute_data_cleanup,
-    "prd_parse": _execute_prd_parse,
     "figma_export": _execute_figma,
     "discover_crawl": _execute_discover_crawl,
     "design_compare": _execute_score_evaluator,
