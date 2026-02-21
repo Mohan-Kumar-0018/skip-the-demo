@@ -80,15 +80,27 @@ class PipelineScheduler:
         except Exception:
             # Critical step failure — abort the whole pipeline
             if step_name in CRITICAL_STEPS:
-                self._failed_critical = True
-                fail_run(self.run_id, f"Critical step {step_name} failed")
-                self._done.set()
+                await self._abort(f"Critical step {step_name} failed")
                 return
         finally:
             self._running_tasks.pop(step_name, None)
 
         if not self._failed_critical:
             await self._on_step_done()
+
+    async def _abort(self, reason: str) -> None:
+        """Cancel all running tasks and mark the pipeline as failed."""
+        async with self._lock:
+            if self._done.is_set():
+                return
+            self._failed_critical = True
+            # Cancel sibling tasks before signalling completion
+            for name, task in self._running_tasks.items():
+                if not task.done():
+                    logger.info("Cancelling step %s due to abort: %s", name, reason)
+                    task.cancel()
+            fail_run(self.run_id, reason)
+            self._done.set()
 
     async def _on_step_done(self) -> None:
         """Replan callback — serialized via lock to prevent double-dispatch."""
