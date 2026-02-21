@@ -5,11 +5,12 @@ import os
 from agent_runner import run_agent_loop
 from tools.slack_tools import post_slack_message, read_slack_messages, upload_slack_file
 
-DEFAULT_CHANNEL = os.getenv("SLACK_CHANNEL", "#skipdemo-pm")
+DEFAULT_CHANNEL = os.getenv("SLACK_CHANNEL", "#skip-the-demo")
 
 SYSTEM_PROMPT = f"""You are a Slack agent. You can read and post messages to Slack channels, and upload files.
 
-Default channel: {DEFAULT_CHANNEL}
+IMPORTANT: Always post to this exact channel: {DEFAULT_CHANNEL}
+Do NOT guess or invent channel names. Use "{DEFAULT_CHANNEL}" for every tool call.
 
 When posting PM briefings:
 1. Post the briefing message to the channel.

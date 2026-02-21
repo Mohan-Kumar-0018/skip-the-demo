@@ -78,7 +78,9 @@ async def take_screenshot(job_id: str) -> dict[str, str]:
     """Capture a screenshot of the current page. Returns the file path."""
     session = await _get_session(job_id)
     session["screenshot_count"] += 1
-    path = f"{session['output_dir']}/screen_{session['screenshot_count']}.png"
+    screenshots_dir = f"{session['output_dir']}/screenshots"
+    os.makedirs(screenshots_dir, exist_ok=True)
+    path = f"{screenshots_dir}/screen_{session['screenshot_count']}.png"
     await session["page"].screenshot(path=path, full_page=True)
     return {"path": path}
 
@@ -305,8 +307,10 @@ async def start_recording(job_id: str) -> dict[str, str]:
     await session["context"].close()
 
     # 3. Create new context WITH video recording, importing saved state
+    video_dir = f"{output_dir}/video"
+    os.makedirs(video_dir, exist_ok=True)
     new_context = await session["browser"].new_context(
-        record_video_dir=output_dir,
+        record_video_dir=video_dir,
         record_video_size={"width": 1280, "height": 720},
         viewport={"width": 1280, "height": 720},
         storage_state=storage_state,
@@ -345,11 +349,13 @@ async def stop_recording(job_id: str) -> dict[str, Any]:
         video_path = await video.path()
         video_path = str(video_path)
 
-    # Fallback: find video file in output dir
+    # Fallback: find video file in video subdir
     if not video_path:
-        video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
-        if video_files:
-            video_path = f"{output_dir}/{video_files[0]}"
+        video_dir = f"{output_dir}/video"
+        if os.path.isdir(video_dir):
+            video_files = [f for f in os.listdir(video_dir) if f.endswith((".webm", ".mov"))]
+            if video_files:
+                video_path = f"{video_dir}/{video_files[0]}"
 
     # Save action log as JSON for standalone use
     if action_log:

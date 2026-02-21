@@ -46,8 +46,10 @@ def upload_slack_file(
     if not os.path.isfile(file_path):
         return {"ok": "False", "error": f"File not found: {file_path}"}
     client = _get_client()
+    # files_upload_v2 requires channel ID, not name
+    channel_id = os.getenv("SLACK_CHANNEL_ID", channel)
     kwargs: dict[str, Any] = {
-        "channel": channel,
+        "channel": channel_id,
         "file": file_path,
         "title": title,
     }

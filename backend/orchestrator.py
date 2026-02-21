@@ -99,16 +99,18 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
             "slack_sent": False,
         }
 
-        output_dir = f"outputs/{run_id}"
-        if os.path.isdir(output_dir):
+        screenshots_dir = f"outputs/{run_id}/screenshots"
+        video_dir = f"outputs/{run_id}/video"
+        if os.path.isdir(screenshots_dir):
             collected["screenshots"] = [
-                f"{output_dir}/{f}"
-                for f in sorted(os.listdir(output_dir))
+                f"{screenshots_dir}/{f}"
+                for f in sorted(os.listdir(screenshots_dir))
                 if f.endswith(".png")
             ]
-            video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
+        if os.path.isdir(video_dir):
+            video_files = [f for f in os.listdir(video_dir) if f.endswith((".webm", ".mov"))]
             if video_files:
-                collected["video_path"] = f"{output_dir}/{video_files[0]}"
+                collected["video_path"] = f"{video_dir}/{video_files[0]}"
 
         update_step_status(run_id, "browser_crawl", "done")
         update_run(run_id, "Complete", 100)
@@ -173,16 +175,18 @@ async def run_discover_crawl_pipeline(
             "slack_sent": False,
         }
 
-        output_dir = "outputs/uat_screenshots"
-        if os.path.isdir(output_dir):
+        screenshots_dir = "outputs/uat_screenshots/screenshots"
+        video_dir = "outputs/uat_screenshots/video"
+        if os.path.isdir(screenshots_dir):
             collected["screenshots"] = [
-                f"{output_dir}/{f}"
-                for f in sorted(os.listdir(output_dir))
+                f"{screenshots_dir}/{f}"
+                for f in sorted(os.listdir(screenshots_dir))
                 if f.endswith(".png")
             ]
-            video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
+        if os.path.isdir(video_dir):
+            video_files = [f for f in os.listdir(video_dir) if f.endswith((".webm", ".mov"))]
             if video_files:
-                collected["video_path"] = f"{output_dir}/{video_files[0]}"
+                collected["video_path"] = f"{video_dir}/{video_files[0]}"
 
         update_run(run_id, "Complete", 100)
         save_results(run_id, collected)

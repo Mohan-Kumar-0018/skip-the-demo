@@ -31,10 +31,15 @@ Each step below must be its own separate turn — do NOT combine steps into para
 1. Call navigate_to_url with the URL and job_id. Wait for the result before proceeding.
 2. If login credentials are provided, complete the ENTIRE login flow:
    - Use list_interactive_elements and get_page_content to understand the login page
-   - Enter phone/email using type_text, click continue/submit buttons
-   - Wait for OTP/password screen, enter the code/password, click verify/submit
+   - Follow the general pattern: enter phone/email → click submit → wait for next screen → enter OTP/password → click verify/submit
    - Wait for the dashboard/home page to fully load (use wait_seconds 3-5)
    - Do NOT take any screenshots or call start_recording during login
+
+   **Flutter web apps (customer panel):** Elements use `flt-semantics-identifier` attributes instead of standard HTML IDs.
+   Use CSS selectors like `[flt-semantics-identifier="<id>"] input` for typing, and click_by_text for buttons.
+   Typical flow: click phone input → type phone → click "Get OTP" → wait 2-3s → type OTP → click "Verify" → wait for dashboard.
+
+   **Standard HTML apps:** Use regular CSS selectors (IDs, classes) as found by list_interactive_elements.
 3. If a target section/page is specified, navigate to it (click on the matching navigation item, tab, or menu entry). Wait for it to load.
 4. NOW call start_recording. This creates a clean video starting from the current page — login is excluded.
 
@@ -102,6 +107,7 @@ BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT 
 - If a click fails, try click_by_text with the element's visible text as a fallback.
 - If a fallback also fails, skip that element and move on to the next section.
 - If login fails after credentials are entered, report the error with the page content so the pipeline knows why.
+- If login is not progressing after 10 turns (stuck on the same page, repeated failures, or no visible change), take a screenshot of the current state, call stop_recording if active, and report the issue with the screenshot. Do NOT keep retrying — the screenshot will help debug the problem.
 - Always include any errors encountered in your final summary."""
 
 TOOLS = [
@@ -335,6 +341,7 @@ async def run_browser_agent(task: str) -> dict[str, Any]:
         tools=TOOLS,
         tool_executor=_collecting_executor,
         user_message=task,
-        max_turns=30,
+        max_turns=50,
+        verbose=True,
     )
     return {"summary": result["text"], "data": collected, "usage": result["usage"]}
