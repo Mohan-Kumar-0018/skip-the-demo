@@ -28,7 +28,6 @@ from db.models import (
     save_token_usage,
     update_plan_step,
     update_run,
-    update_step_status,
 )
 from tools.kb_tools import get_knowledge
 from utils.adf_parser import adf_to_text
@@ -146,7 +145,6 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
 
     # Mark step running
     update_plan_step(run_id, step_name, "running")
-    update_step_status(run_id, step_name, "running")
     update_run(run_id, label, 0)  # progress updated by scheduler
 
     try:
@@ -154,13 +152,11 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
         if handler is None:
             logger.warning("No handler for step %s, skipping", step_name)
             update_plan_step(run_id, step_name, "skipped", result_summary="No handler")
-            update_step_status(run_id, step_name, "done")
             return "No handler"
 
         result_summary = await handler(run_id, ticket_id, params)
 
         update_plan_step(run_id, step_name, "done", result_summary=result_summary)
-        update_step_status(run_id, step_name, "done")
 
         # Update feature_name on run if jira provided it
         jira_out = get_step_output(run_id, "jira_fetch")
@@ -173,7 +169,6 @@ async def run_step(run_id: str, ticket_id: str, step: dict[str, Any]) -> str:
         error_msg = str(e)
         logger.exception("Step %s failed for run %s", step_name, run_id)
         update_plan_step(run_id, step_name, "failed", error=error_msg)
-        update_step_status(run_id, step_name, "failed", error=error_msg)
 
         if step_name in CRITICAL_STEPS:
             raise

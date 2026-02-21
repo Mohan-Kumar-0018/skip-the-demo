@@ -144,11 +144,10 @@ def build_display():
 
 # ── Monkey-patch orchestrator to update state in real-time ─
 def patch_orchestrator():
-    """Wrap update_run, insert_step, and update_step_status to feed state dict."""
+    """Wrap update_run and update_plan_step to feed state dict."""
     from db import models as m
     _orig_update = m.update_run
-    _orig_insert = m.insert_step
-    _orig_update_status = m.update_step_status
+    _orig_plan_step = m.update_plan_step
 
     def patched_update(run_id, stage, progress, status="running", feature_name=None):
         state["stage"] = stage
@@ -156,17 +155,12 @@ def patch_orchestrator():
         state["status"] = status
         return _orig_update(run_id, stage, progress, status, feature_name)
 
-    def patched_insert(run_id, step_name):
-        state["steps"][step_name] = "pending"
-        return _orig_insert(run_id, step_name)
-
-    def patched_update_status(run_id, step_name, step_status, error=None):
-        state["steps"][step_name] = step_status
-        return _orig_update_status(run_id, step_name, step_status, error)
+    def patched_plan_step(run_id, step_name, status, result_summary=None, error=None):
+        state["steps"][step_name] = status
+        return _orig_plan_step(run_id, step_name, status, result_summary, error)
 
     m.update_run = patched_update
-    m.insert_step = patched_insert
-    m.update_step_status = patched_update_status
+    m.update_plan_step = patched_plan_step
 
 
 # ── Print DB results after pipeline ──────────────────────

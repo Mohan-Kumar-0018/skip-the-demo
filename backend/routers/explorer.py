@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from db.models import (
     get_run_by_id,
-    get_run_step_by_id,
     get_run_result_by_id,
     get_run_jira_data_by_id,
     get_run_figma_data_by_id,
@@ -25,17 +24,6 @@ def api_get_run(run_id: str):
     row = get_run_by_id(run_id)
     if not row:
         raise HTTPException(status_code=404, detail="Run not found")
-    return row
-
-
-# ── Run Steps ────────────────────────────
-
-
-@router.get("/run-steps/{step_id}")
-def api_get_run_step(step_id: int):
-    row = get_run_step_by_id(step_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Run step not found")
     return row
 
 

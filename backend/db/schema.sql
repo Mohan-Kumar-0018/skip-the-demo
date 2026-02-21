@@ -5,18 +5,9 @@ CREATE TABLE IF NOT EXISTS runs (
     status          VARCHAR(50)  DEFAULT 'running',
     stage           VARCHAR(255),
     progress        INTEGER      DEFAULT 0,
+    plan            JSONB,
     created_at      TIMESTAMP    DEFAULT NOW(),
     completed_at    TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS run_steps (
-    id              SERIAL       PRIMARY KEY,
-    run_id          VARCHAR(8)   REFERENCES runs(id),
-    step_name       VARCHAR(100),
-    step_status     VARCHAR(50),
-    error           TEXT,
-    updated_at      TIMESTAMP    DEFAULT NOW(),
-    UNIQUE(run_id, step_name)
 );
 
 CREATE TABLE IF NOT EXISTS run_results (

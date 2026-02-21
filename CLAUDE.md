@@ -65,11 +65,11 @@ The pipeline uses a two-phase approach instead of an LLM orchestrator loop:
 
 Critical steps (`jira_fetch`, `browser_crawl`) abort the pipeline on failure. Non-critical steps log the error and continue.
 
-Each step updates both `run_plan` (step-level tracking) and `run_steps` (dashboard progress). The DB is the shared memory between steps. Frontend polls `GET /status/{job_id}` every 2 seconds.
+Each step updates `run_plan` (step-level tracking via UPSERT — rows created only when steps execute). The LLM-generated plan is stored as JSONB in `runs.plan` (the intent); `run_plan` rows represent reality. `get_plan()` merges both. Frontend polls `GET /status/{job_id}` every 2 seconds.
 
 **API endpoints:** `POST /run`, `POST /run-browser`, `GET /status/{job_id}`, `GET /results/{job_id}`, `GET /plan/{job_id}`, `GET /history`, `GET /history/{job_id}`, `GET /agent-data/{job_id}`, `GET /token-usage/{job_id}`
 
-**Database:** 8 tables — `runs` (job metadata + progress), `run_steps` (per-step status), `run_results` (final outputs as JSONB), `run_plan` (execution plan steps), `run_jira_data`, `run_figma_data`, `run_browser_data` (per-agent data), `run_token_usage` (cost tracking). All DB functions use context managers with `get_conn()`. `DATABASE_URL` is configured in `backend/.env`.
+**Database:** 8 tables — `runs` (job metadata + progress + `plan` JSONB), `run_results` (final outputs as JSONB), `run_plan` (executed step tracking), `run_jira_data`, `run_figma_data`, `run_browser_data` (per-agent data), `run_token_usage` (cost tracking), `run_step_outputs` (per-step outputs as JSONB). All DB functions use context managers with `get_conn()`. `DATABASE_URL` is configured in `backend/.env`.
 
 ## Key Conventions
 

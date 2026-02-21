@@ -84,51 +84,6 @@ def get_all_runs() -> list[dict[str, Any]]:
             return cur.fetchall()
 
 
-# ── STEPS ─────────────────────────────────
-
-
-def insert_step(run_id: str, step_name: str) -> None:
-    """Create a new step row with status 'pending'. Call once per step."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO run_steps (run_id, step_name, step_status, updated_at)
-                VALUES (%s, %s, 'pending', NOW())
-                """,
-                (run_id, step_name),
-            )
-
-
-def update_step_status(
-    run_id: str, step_name: str, step_status: str, error: str | None = None
-) -> None:
-    """Update an existing step's status. Row must already exist."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE run_steps
-                SET step_status=%s, error=%s, updated_at=NOW()
-                WHERE run_id=%s AND step_name=%s
-                """,
-                (step_status, error, run_id, step_name),
-            )
-
-
-def get_steps(run_id: str) -> list[dict[str, Any]]:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT step_name, step_status, error FROM run_steps
-                WHERE run_id=%s ORDER BY id
-                """,
-                (run_id,),
-            )
-            return [dict(r) for r in cur.fetchall()]
-
-
 # ── RESULTS ───────────────────────────────
 
 
@@ -499,14 +454,14 @@ def get_dashboard_step_reliability() -> list[dict[str, Any]]:
                 SELECT
                     step_name,
                     COUNT(*)                                          AS total,
-                    COUNT(*) FILTER (WHERE step_status = 'done')      AS succeeded,
-                    COUNT(*) FILTER (WHERE step_status = 'failed')    AS failed,
-                    COUNT(*) FILTER (WHERE step_status = 'pending')   AS pending,
+                    COUNT(*) FILTER (WHERE status = 'done')           AS succeeded,
+                    COUNT(*) FILTER (WHERE status = 'failed')         AS failed,
+                    COUNT(*) FILTER (WHERE status = 'pending')        AS pending,
                     ROUND(
-                        100.0 * COUNT(*) FILTER (WHERE step_status = 'failed')
+                        100.0 * COUNT(*) FILTER (WHERE status = 'failed')
                         / NULLIF(COUNT(*), 0), 1
                     )                                                 AS failure_rate_pct
-                FROM run_steps
+                FROM run_plan
                 GROUP BY step_name
                 ORDER BY failure_rate_pct DESC
                 """
@@ -544,14 +499,12 @@ def get_dashboard_failures() -> list[dict[str, Any]]:
                     r.ticket_id,
                     r.feature_name,
                     r.created_at,
-                    rs.step_name,
-                    rs.error,
+                    rp.step_name,
+                    rp.error,
                     rp.agent
                 FROM runs r
-                JOIN run_steps rs
-                    ON r.id = rs.run_id AND rs.step_status = 'failed'
-                LEFT JOIN run_plan rp
-                    ON r.id = rp.run_id AND rs.step_name = rp.step_name
+                JOIN run_plan rp
+                    ON r.id = rp.run_id AND rp.status = 'failed'
                 ORDER BY r.created_at DESC
                 """
             )
@@ -568,12 +521,12 @@ def get_dashboard_funnel() -> list[dict[str, Any]]:
                     r.ticket_id,
                     r.feature_name,
                     r.status,
-                    COUNT(*) FILTER (WHERE rs.step_status = 'done')  AS steps_completed,
-                    COUNT(*)                                         AS steps_total,
-                    MAX(CASE WHEN rs.step_status = 'failed'
-                             THEN rs.step_name END)                  AS failed_at_step
+                    COUNT(*) FILTER (WHERE rp.status = 'done')  AS steps_completed,
+                    COUNT(*)                                     AS steps_total,
+                    MAX(CASE WHEN rp.status = 'failed'
+                             THEN rp.step_name END)              AS failed_at_step
                 FROM runs r
-                JOIN run_steps rs ON r.id = rs.run_id
+                JOIN run_plan rp ON r.id = rp.run_id
                 GROUP BY r.id, r.ticket_id, r.feature_name, r.status
                 ORDER BY r.created_at DESC
                 """
@@ -628,17 +581,6 @@ def list_runs(limit: int = 50, offset: int = 0) -> dict[str, Any]:
 
 def get_run_by_id(run_id: str) -> dict[str, Any] | None:
     return _get_by_id("runs", run_id)
-
-
-# ── EXPLORER: RUN STEPS ────────────────
-
-
-def list_run_steps(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_steps", limit, offset, order_by="id DESC")
-
-
-def get_run_step_by_id(step_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_steps", step_id)
 
 
 # ── EXPLORER: RUN RESULTS ──────────────
@@ -768,44 +710,71 @@ def assemble_results(run_id: str) -> dict[str, Any]:
 
 
 def save_plan(run_id: str, steps: list[dict[str, Any]]) -> None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            for step in steps:
-                cur.execute(
-                    """
-                    INSERT INTO run_plan
-                      (run_id, step_order, step_name, agent, params, depends_on, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
-                    ON CONFLICT (run_id, step_name) DO UPDATE SET
-                        step_order = EXCLUDED.step_order,
-                        agent      = EXCLUDED.agent,
-                        params     = EXCLUDED.params,
-                        depends_on = EXCLUDED.depends_on,
-                        status     = 'pending'
-                    """,
-                    (
-                        run_id,
-                        step["step_order"],
-                        step["step_name"],
-                        step["agent"],
-                        json.dumps(step.get("params", {})),
-                        step.get("depends_on", []),
-                    ),
-                )
-
-
-def get_plan(run_id: str) -> list[dict[str, Any]]:
+    """Write the LLM-generated plan as JSONB into runs.plan (the intent)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT * FROM run_plan
-                WHERE run_id=%s
-                ORDER BY step_order
-                """,
+                "UPDATE runs SET plan = %s WHERE id = %s",
+                (json.dumps(steps), run_id),
+            )
+
+
+def get_plan_intent(run_id: str) -> list[dict[str, Any]]:
+    """Read the raw LLM plan from runs.plan JSONB."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT plan FROM runs WHERE id = %s", (run_id,))
+            row = cur.fetchone()
+            if not row or not row["plan"]:
+                return []
+            plan = row["plan"]
+            return json.loads(plan) if isinstance(plan, str) else plan
+
+
+def get_plan(run_id: str) -> list[dict[str, Any]]:
+    """Merge intent (runs.plan) + reality (run_plan rows).
+
+    Returns the same shape as before so all callers work unchanged:
+    each step dict has step_order, step_name, agent, params, depends_on,
+    status, result_summary, error, started_at, completed_at.
+    """
+    intent = get_plan_intent(run_id)
+    if not intent:
+        return []
+
+    # Fetch reality rows
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM run_plan WHERE run_id = %s",
                 (run_id,),
             )
-            return [dict(r) for r in cur.fetchall()]
+            reality = {r["step_name"]: dict(r) for r in cur.fetchall()}
+
+    merged: list[dict[str, Any]] = []
+    for step in intent:
+        name = step["step_name"]
+        if name in reality:
+            merged.append(reality[name])
+        else:
+            # Step not yet executed — synthesize from intent
+            merged.append({
+                "id": None,
+                "run_id": run_id,
+                "step_order": step.get("step_order", 0),
+                "step_name": name,
+                "agent": step.get("agent", ""),
+                "params": step.get("params", {}),
+                "depends_on": step.get("depends_on", []),
+                "status": "pending",
+                "result_summary": None,
+                "error": None,
+                "started_at": None,
+                "completed_at": None,
+                "created_at": None,
+            })
+
+    return merged
 
 
 def update_plan_step(
@@ -815,25 +784,61 @@ def update_plan_step(
     result_summary: str | None = None,
     error: str | None = None,
 ) -> None:
+    """UPSERT into run_plan: INSERT on first touch (from intent data), UPDATE thereafter.
+
+    "running" and "skipped" can both be first-touch statuses.
+    """
+    intent = get_plan_intent(run_id)
+    intent_step = next((s for s in intent if s["step_name"] == step_name), None)
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             if status == "running":
                 cur.execute(
                     """
-                    UPDATE run_plan
-                    SET status=%s, started_at=NOW()
-                    WHERE run_id=%s AND step_name=%s
+                    INSERT INTO run_plan
+                      (run_id, step_order, step_name, agent, params, depends_on,
+                       status, started_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (run_id, step_name) DO UPDATE SET
+                        status     = EXCLUDED.status,
+                        started_at = NOW()
                     """,
-                    (status, run_id, step_name),
+                    (
+                        run_id,
+                        intent_step["step_order"] if intent_step else 0,
+                        step_name,
+                        intent_step["agent"] if intent_step else "",
+                        json.dumps(intent_step.get("params", {})) if intent_step else "{}",
+                        intent_step.get("depends_on", []) if intent_step else [],
+                        status,
+                    ),
                 )
             else:
+                # done, failed, skipped — may be first touch (e.g. skipped)
                 cur.execute(
                     """
-                    UPDATE run_plan
-                    SET status=%s, result_summary=%s, error=%s, completed_at=NOW()
-                    WHERE run_id=%s AND step_name=%s
+                    INSERT INTO run_plan
+                      (run_id, step_order, step_name, agent, params, depends_on,
+                       status, result_summary, error, completed_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (run_id, step_name) DO UPDATE SET
+                        status         = EXCLUDED.status,
+                        result_summary = EXCLUDED.result_summary,
+                        error          = EXCLUDED.error,
+                        completed_at   = NOW()
                     """,
-                    (status, result_summary, error, run_id, step_name),
+                    (
+                        run_id,
+                        intent_step["step_order"] if intent_step else 0,
+                        step_name,
+                        intent_step["agent"] if intent_step else "",
+                        json.dumps(intent_step.get("params", {})) if intent_step else "{}",
+                        intent_step.get("depends_on", []) if intent_step else [],
+                        status,
+                        result_summary,
+                        error,
+                    ),
                 )
 
 

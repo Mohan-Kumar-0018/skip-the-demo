@@ -9,11 +9,11 @@ from db.models import (
     complete_run,
     fail_run,
     save_browser_data,
+    save_plan,
     save_results,
     save_token_usage,
+    update_plan_step,
     update_run,
-    insert_step,
-    update_step_status,
 )
 from scheduler import PipelineScheduler
 from tools.kb_tools import get_knowledge
@@ -34,8 +34,10 @@ STEPS = [
 async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
     """Standalone browser crawl — looks up KB for URL/creds, then runs browser agent."""
     try:
-        # Init steps
-        insert_step(run_id, "browser_crawl")
+        # Synthetic 1-step plan
+        save_plan(run_id, [
+            {"step_order": 1, "step_name": "browser_crawl", "agent": "browser", "params": {}, "depends_on": []},
+        ])
 
         # 1. Look up staging URL and credentials from KB
         kb_entry = get_knowledge("staging_urls", kb_key)
@@ -76,7 +78,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
         )
 
         # 3. Run browser agent
-        update_step_status(run_id, "browser_crawl", "running")
+        update_plan_step(run_id, "browser_crawl", "running")
         update_run(run_id, "Crawling staging app...", 30)
 
         result = await run_browser_agent(task)
@@ -111,7 +113,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
             if video_files:
                 collected["video_path"] = f"{video_dir}/{video_files[0]}"
 
-        update_step_status(run_id, "browser_crawl", "done")
+        update_plan_step(run_id, "browser_crawl", "done", result_summary="Browser crawl completed")
         update_run(run_id, "Complete", 100)
 
         save_results(run_id, collected)
@@ -127,24 +129,24 @@ async def run_discover_crawl_pipeline(
 ) -> None:
     """Discover-crawl pipeline — login, discover nav, then full crawl."""
     try:
-        # Init steps
-        insert_step(run_id, "login")
-        insert_step(run_id, "nav_discovery")
-        insert_step(run_id, "browser_crawl")
+        # Synthetic 3-step plan
+        save_plan(run_id, [
+            {"step_order": 1, "step_name": "login", "agent": "discover_crawl", "params": {}, "depends_on": []},
+            {"step_order": 2, "step_name": "nav_discovery", "agent": "discover_crawl", "params": {}, "depends_on": ["login"]},
+            {"step_order": 3, "step_name": "browser_crawl", "agent": "discover_crawl", "params": {}, "depends_on": ["nav_discovery"]},
+        ])
 
         # Phase 1: Login
-        update_step_status(run_id, "login", "running")
+        update_plan_step(run_id, "login", "running")
         update_run(run_id, "Logging in and capturing home page...", 10)
 
-        # Phase 2: Nav discovery (status updated after login completes inside agent)
-        # Phase 3: Browser crawl
-
+        # Phase 2: Nav discovery + Phase 3: Browser crawl
         result = await run_discover_crawl(run_id, kb_key, figma_images_dir)
 
         # Update step statuses
-        update_step_status(run_id, "login", "done")
-        update_step_status(run_id, "nav_discovery", "done")
-        update_step_status(run_id, "browser_crawl", "done")
+        update_plan_step(run_id, "login", "done", result_summary="Logged in")
+        update_plan_step(run_id, "nav_discovery", "done", result_summary="Nav discovered")
+        update_plan_step(run_id, "browser_crawl", "done", result_summary="Crawl completed")
 
         # Save token usage
         usage = result.get("usage", {})

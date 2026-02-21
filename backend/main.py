@@ -37,7 +37,6 @@ from db.models import (
     get_plan,
     get_results,
     get_run,
-    get_steps,
     get_token_usage,
     get_token_usage_summary,
 )
@@ -117,10 +116,10 @@ def status(job_id: str):
     run = get_run(job_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    steps_raw = get_steps(job_id)
+    plan_steps = get_plan(job_id)
     steps = [
-        {"name": s["step_name"], "status": s["step_status"], "error": s["error"]}
-        for s in steps_raw
+        {"name": s["step_name"], "status": s["status"], "error": s.get("error")}
+        for s in plan_steps
     ]
     return {
         "job_id": run["id"],
