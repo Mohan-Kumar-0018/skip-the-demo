@@ -31,6 +31,8 @@ from moviepy.editor import (
 )
 from PIL import Image, ImageDraw, ImageFont
 
+import imageio_ffmpeg
+
 from agent_runner import calc_cost
 
 logger = logging.getLogger(__name__)
@@ -59,40 +61,31 @@ ACTION_SUBTITLE_MIN_GAP = 0.3  # gap between consecutive subtitles
 # ─── Video loading helper ────────────────────────────────────────
 
 
+def _get_ffmpeg_binary() -> str:
+    """Return the path to the ffmpeg binary (bundled via imageio_ffmpeg)."""
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
 def _probe_video_duration(video_path: str) -> float | None:
-    """Probe video duration via ffprobe, with frame-counting fallback.
+    """Probe video duration using the bundled ffmpeg binary.
 
     Playwright's webm recordings often omit duration metadata, causing
-    MoviePy/older ffmpeg to fail.  This uses ffprobe to recover the
-    duration independently.
+    MoviePy/older ffmpeg to fail.  This decodes to null output and parses
+    the last reported timestamp from stderr.
     """
-    # Attempt 1: direct format duration
-    try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        dur = result.stdout.strip()
-        if dur and dur != "N/A":
-            return float(dur)
-    except (subprocess.SubprocessError, ValueError):
-        pass
+    ffmpeg = _get_ffmpeg_binary()
 
-    # Attempt 2: count frames and compute from fps
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
-             "-show_entries", "stream=nb_read_frames,r_frame_rate",
-             "-of", "json", video_path],
+            [ffmpeg, "-i", video_path, "-c", "copy", "-f", "null", "-"],
             capture_output=True, text=True, timeout=120,
         )
-        data = json.loads(result.stdout)
-        stream = data["streams"][0]
-        frames = int(stream["nb_read_frames"])
-        num, den = map(int, stream["r_frame_rate"].split("/"))
-        return frames / (num / den)
-    except (subprocess.SubprocessError, ValueError, KeyError, ZeroDivisionError):
+        # Parse "time=HH:MM:SS.xx" from ffmpeg stderr (last occurrence)
+        times = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", result.stderr)
+        if times:
+            h, m, s = times[-1]
+            return int(h) * 3600 + int(m) * 60 + float(s)
+    except (subprocess.SubprocessError, ValueError):
         pass
 
     return None
@@ -101,7 +94,7 @@ def _probe_video_duration(video_path: str) -> float | None:
 def _fix_video_metadata(video_path: str) -> str:
     """Remux a video to embed correct duration metadata.
 
-    Uses ffprobe to discover the real duration, then remuxes with
+    Uses ffmpeg to discover the real duration, then remuxes with
     ``-t <duration> -c copy`` so the container header is correct.
     Returns the (same) path after in-place replacement.
     """
@@ -109,9 +102,10 @@ def _fix_video_metadata(video_path: str) -> str:
     if duration is None:
         raise OSError(f"Cannot determine duration of {video_path}")
 
+    ffmpeg = _get_ffmpeg_binary()
     fixed_path = video_path + ".fixed.webm"
     subprocess.run(
-        ["ffmpeg", "-y", "-i", video_path,
+        [ffmpeg, "-y", "-i", video_path,
          "-t", str(duration), "-c", "copy", fixed_path],
         capture_output=True, check=True, timeout=120,
     )

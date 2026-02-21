@@ -16,6 +16,42 @@ logger = logging.getLogger(__name__)
 client = anthropic.Anthropic(max_retries=5)
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
+
+def _extract_first_json_object(text: str) -> dict:
+    """Parse the first JSON object from *text*, ignoring trailing content."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Find matching braces for the first { ... }
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            if in_string:
+                escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise json.JSONDecodeError("Unterminated JSON object", text, start)
+
+
 PLANNER_SYSTEM_PROMPT = """\
 You are the SkipTheDemo pipeline planner. Given a Jira ticket ID and optional context \
 (staging URLs, credentials, project info from the knowledge base), produce an execution plan \
@@ -191,7 +227,8 @@ async def replan(run_id: str, ticket_id: str) -> dict[str, Any]:
         if text.endswith("```"):
             text = text[:-3].strip()
 
-    decision = json.loads(text)
+    # Extract the first JSON object — LLM may append extra text
+    decision = _extract_first_json_object(text)
     logger.info("Replan for run %s: %s", run_id, decision)
 
     return decision

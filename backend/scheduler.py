@@ -110,7 +110,11 @@ class PipelineScheduler:
 
             self._update_progress()
 
-            decision = await replan(self.run_id, self.ticket_id)
+            try:
+                decision = await replan(self.run_id, self.ticket_id)
+            except Exception:
+                logger.exception("Replan failed for run %s, falling back to deterministic check", self.run_id)
+                decision = self._deterministic_replan()
 
             if decision["action"] == "complete":
                 await self._complete_pipeline()
@@ -118,12 +122,40 @@ class PipelineScheduler:
                 self._dispatch_steps(decision["steps"])
             # "wait" — do nothing, a running task will trigger the next callback
 
+    def _deterministic_replan(self) -> dict[str, Any]:
+        """Fallback replan using the same rules as the LLM prompt, no API call."""
+        plan = get_plan(self.run_id)
+        satisfies_dep = {"done", "skipped"}  # "failed" does NOT satisfy
+        ready = []
+        any_running = False
+        for step in plan:
+            if step["status"] == "running":
+                any_running = True
+            elif step["status"] == "pending":
+                deps = step.get("depends_on", [])
+                dep_statuses = {
+                    s["step_name"]: s["status"] for s in plan if s["step_name"] in deps
+                }
+                if all(dep_statuses.get(d) in satisfies_dep for d in deps):
+                    ready.append(step["step_name"])
+        if ready:
+            return {"action": "dispatch", "steps": ready}
+        if any_running:
+            return {"action": "wait", "steps": []}
+        return {"action": "complete", "steps": []}
+
     async def _complete_pipeline(self) -> None:
         """Assemble results from DB, save, and signal completion."""
         results = assemble_results(self.run_id)
         save_results(self.run_id, results)
-        complete_run(self.run_id)
-        logger.info("Pipeline completed for run %s", self.run_id)
+        plan = get_plan(self.run_id)
+        failed_steps = [s["step_name"] for s in plan if s["status"] == "failed"]
+        if failed_steps:
+            fail_run(self.run_id, f"Steps failed: {', '.join(failed_steps)}")
+            logger.info("Pipeline finished with failures for run %s: %s", self.run_id, failed_steps)
+        else:
+            complete_run(self.run_id)
+            logger.info("Pipeline completed for run %s", self.run_id)
         self._done.set()
 
     def _update_progress(self) -> None:
