@@ -149,7 +149,7 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     # Extract Figma URLs from description and comments
     figma_pattern = r'https?://(?:www\.)?figma\.com/(?:design|file)/[^\s\)\]\"\'>]+'
     design_links: list[str] = []
-    desc_str = str(ticket.get("description", ""))
+    desc_str = adf_to_text(str(ticket.get("description", "")))
     design_links.extend(re.findall(figma_pattern, desc_str))
     for comment in jira_data.get("comments", []):
         design_links.extend(re.findall(figma_pattern, comment.get("body", "")))
@@ -452,9 +452,7 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
     # Read inputs from DB
     jira_out = get_step_output(run_id, "jira_fetch")
     feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
-
-    prd_out = get_step_output(run_id, "prd_parse")
-    prd_text = prd_out.get("prd_text", "") if prd_out else ""
+    prd_text = jira_out.get("prd_text", "") if jira_out else ""
 
     vision_out = get_step_output(run_id, "design_compare")
     design_result = {

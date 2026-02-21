@@ -33,19 +33,17 @@ Available agents:
 
 Rules:
 1. jira_fetch is ALWAYS the first step.
-2. data_cleanup depends on jira_fetch (cleans raw Jira data like ADF markup into plain text).
-3. prd_parse depends on data_cleanup (extracts text from downloaded PDFs).
-4. figma_export depends on jira_fetch (needs Figma URLs from ticket).
-5. nav_plan depends on figma_export (analyzes exported design screens to plan navigation).
-6. browser_crawl depends on jira_fetch and nav_plan (needs staging URL + navigation guidance).
-7. design_compare depends on browser_crawl and figma_export (needs screenshots + design).
-8. synthesis depends on design_compare and prd_parse (needs scores + PRD text).
-9. slack_delivery depends on synthesis (needs the complete briefing).
+2. figma_export depends on jira_fetch (needs Figma URLs from ticket).
+3. nav_plan depends on figma_export (analyzes exported design screens to plan navigation).
+4. browser_crawl depends on jira_fetch and nav_plan (needs staging URL + navigation guidance).
+5. design_compare depends on browser_crawl and figma_export (needs screenshots + design).
+6. synthesis depends on design_compare (needs scores + PRD text).
+7. slack_delivery depends on synthesis (needs the complete briefing).
 
 Output ONLY a JSON array. Each element must have:
 - step_order (int, 1-based)
-- step_name (string, one of: jira_fetch, data_cleanup, prd_parse, figma_export, nav_plan, browser_crawl, design_compare, synthesis, slack_delivery)
-- agent (string, one of: jira, internal, figma, nav_planner, browser, vision, synthesis, slack)
+- step_name (string, one of: jira_fetch, figma_export, nav_plan, browser_crawl, design_compare, synthesis, slack_delivery)
+- agent (string, one of: jira, figma, nav_planner, browser, vision, synthesis, slack)
 - params (object, any extra parameters for the step)
 - depends_on (array of step_name strings this step waits for)
 
