@@ -54,6 +54,12 @@ test-vision:
 test-nav:
 	$(ACTIVATE) && IMAGES_DIR="$(IMAGES_DIR)" python test_agent.py nav_planner "$(PROMPT)"
 
+## Score Evaluator — compare UAT screenshots against Figma designs (multi-phase)
+## Requires: UAT_DIR (directory with UAT PNGs), FIGMA_DIR (directory with Figma PNGs)
+## Example: make test-score-eval UAT_DIR=outputs/uat_screenshots FIGMA_DIR=outputs/23d8c274
+test-score-eval:
+	$(ACTIVATE) && UAT_DIR="$(UAT_DIR)" FIGMA_DIR="$(FIGMA_DIR)" python test_agent.py score_eval "evaluate"
+
 ## Synthesis Agent — generate PM summary + release notes from PRD text
 ## Optional: FEATURE (feature name), DESIGN_RESULT (JSON string with score/deviations)
 ## Example: make test-synthesis FEATURE="Supplier Discovery" PROMPT="This feature allows users to search and filter suppliers..."
@@ -94,6 +100,7 @@ help:
 	@echo "  make test-vision     DESIGN=... SCREENSHOT=... PROMPT=  Vision agent (design vs screenshot)"
 	@echo "  make test-figma      PROMPT=\"...\"                       Figma agent (extract design images)"
 	@echo "  make test-nav        IMAGES_DIR=... PROMPT=\"...\"        Nav planner (design screens → nav flow)"
+	@echo "  make test-score-eval UAT_DIR=... FIGMA_DIR=...          Score evaluator (design vs UAT multi-phase)"
 	@echo "  make test-synthesis  PROMPT=\"...\" FEATURE=\"...\"         Synthesis agent (PM summary + release notes)"
 	@echo ""
 	@echo "  make run             TICKET=SG-238                      Trigger full pipeline run"

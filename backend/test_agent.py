@@ -16,7 +16,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 
-AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma", "nav_planner", "discover_crawl"]
+AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma", "nav_planner", "discover_crawl", "score_eval"]
 
 
 async def main():
@@ -190,6 +190,27 @@ async def main():
             },
             indent=2,
         )
+
+    elif agent == "score_eval":
+        from agents.score_evaluator_agent import evaluate_scores
+
+        uat_dir = os.environ.get("UAT_DIR", "")
+        figma_dir = os.environ.get("FIGMA_DIR", "")
+        if not uat_dir or not os.path.isdir(uat_dir):
+            print("score_eval agent requires UAT_DIR env var (directory with UAT screenshot PNGs).")
+            print('Example: make test-score-eval UAT_DIR=outputs/uat_screenshots FIGMA_DIR=outputs/23d8c274')
+            sys.exit(1)
+        if not figma_dir or not os.path.isdir(figma_dir):
+            print("score_eval agent requires FIGMA_DIR env var (directory with Figma design PNGs).")
+            print('Example: make test-score-eval UAT_DIR=outputs/uat_screenshots FIGMA_DIR=outputs/23d8c274')
+            sys.exit(1)
+        uat_count = len([f for f in os.listdir(uat_dir) if f.lower().endswith(".png")])
+        figma_count = len([f for f in os.listdir(figma_dir) if f.lower().endswith(".png")])
+        print(f"  UAT Dir:   {uat_dir} ({uat_count} PNGs)")
+        print(f"  Figma Dir: {figma_dir} ({figma_count} PNGs)")
+        print()
+        raw = evaluate_scores(uat_dir, figma_dir)
+        result = json.dumps(raw, indent=2)
 
     else:
         print(f"Unknown agent: {agent}. Choose from: {', '.join(AGENTS)}")
