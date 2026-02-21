@@ -12,7 +12,8 @@ from db.models import (
     save_results,
     save_token_usage,
     update_run,
-    upsert_step,
+    insert_step,
+    update_step_status,
 )
 from scheduler import PipelineScheduler
 from tools.kb_tools import get_knowledge
@@ -35,7 +36,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
     """Standalone browser crawl — looks up KB for URL/creds, then runs browser agent."""
     try:
         # Init steps
-        upsert_step(run_id, "browser_crawl", "pending")
+        insert_step(run_id, "browser_crawl")
 
         # 1. Look up staging URL and credentials from KB
         kb_entry = get_knowledge("staging_urls", kb_key)
@@ -76,7 +77,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
         )
 
         # 3. Run browser agent
-        upsert_step(run_id, "browser_crawl", "running")
+        update_step_status(run_id, "browser_crawl", "running")
         update_run(run_id, "Crawling staging app...", 30)
 
         result = await run_browser_agent(task)
@@ -109,7 +110,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
             if video_files:
                 collected["video_path"] = f"{output_dir}/{video_files[0]}"
 
-        upsert_step(run_id, "browser_crawl", "done")
+        update_step_status(run_id, "browser_crawl", "done")
         update_run(run_id, "Complete", 100)
 
         save_results(run_id, collected)
@@ -126,12 +127,12 @@ async def run_discover_crawl_pipeline(
     """Discover-crawl pipeline — login, discover nav, then full crawl."""
     try:
         # Init steps
-        upsert_step(run_id, "login", "pending")
-        upsert_step(run_id, "nav_discovery", "pending")
-        upsert_step(run_id, "browser_crawl", "pending")
+        insert_step(run_id, "login")
+        insert_step(run_id, "nav_discovery")
+        insert_step(run_id, "browser_crawl")
 
         # Phase 1: Login
-        upsert_step(run_id, "login", "running")
+        update_step_status(run_id, "login", "running")
         update_run(run_id, "Logging in and capturing home page...", 10)
 
         # Phase 2: Nav discovery (status updated after login completes inside agent)
@@ -140,9 +141,9 @@ async def run_discover_crawl_pipeline(
         result = await run_discover_crawl(run_id, kb_key, figma_images_dir)
 
         # Update step statuses
-        upsert_step(run_id, "login", "done")
-        upsert_step(run_id, "nav_discovery", "done")
-        upsert_step(run_id, "browser_crawl", "done")
+        update_step_status(run_id, "login", "done")
+        update_step_status(run_id, "nav_discovery", "done")
+        update_step_status(run_id, "browser_crawl", "done")
 
         # Save token usage
         usage = result.get("usage", {})
@@ -196,7 +197,7 @@ async def run_pipeline(run_id: str, ticket_id: str) -> None:
     """Main entry point — plans then executes via event-driven scheduler."""
     try:
         # Only init the first step — scheduler creates the rest on dispatch
-        upsert_step(run_id, "jira_fetch", "pending")
+        insert_step(run_id, "jira_fetch")
 
         # Phase 1 + 2: Plan and execute via scheduler
         update_run(run_id, "Planning pipeline...", 2)

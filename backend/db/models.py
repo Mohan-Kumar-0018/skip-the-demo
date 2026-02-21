@@ -87,19 +87,32 @@ def get_all_runs() -> list[dict[str, Any]]:
 # ── STEPS ─────────────────────────────────
 
 
-def upsert_step(
-    run_id: str, step_name: str, step_status: str, error: str | None = None
-) -> None:
+def insert_step(run_id: str, step_name: str) -> None:
+    """Create a new step row with status 'pending'. Call once per step."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO run_steps (run_id, step_name, step_status, error, updated_at)
-                VALUES (%s, %s, %s, %s, NOW())
-                ON CONFLICT (run_id, step_name)
-                DO UPDATE SET step_status=%s, error=%s, updated_at=NOW()
+                INSERT INTO run_steps (run_id, step_name, step_status, updated_at)
+                VALUES (%s, %s, 'pending', NOW())
                 """,
-                (run_id, step_name, step_status, error, step_status, error),
+                (run_id, step_name),
+            )
+
+
+def update_step_status(
+    run_id: str, step_name: str, step_status: str, error: str | None = None
+) -> None:
+    """Update an existing step's status. Row must already exist."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE run_steps
+                SET step_status=%s, error=%s, updated_at=NOW()
+                WHERE run_id=%s AND step_name=%s
+                """,
+                (step_status, error, run_id, step_name),
             )
 
 

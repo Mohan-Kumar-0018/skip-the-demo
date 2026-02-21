@@ -11,7 +11,7 @@ from db.models import (
     get_plan,
     save_results,
     update_run,
-    upsert_step,
+    insert_step,
 )
 from executor import CRITICAL_STEPS, STEP_LABELS, run_step
 from planner import create_plan, replan
@@ -66,7 +66,7 @@ class PipelineScheduler:
                 continue
 
             # Create step row just-in-time before dispatching
-            upsert_step(self.run_id, name, "pending")
+            insert_step(self.run_id, name)
 
             task = asyncio.create_task(
                 self._run_step_with_callback(step),
