@@ -29,8 +29,10 @@ IMPORTANT: Complete ALL of Phase 0 before taking ANY screenshots or calling star
 Each step below must be its own separate turn — do NOT combine steps into parallel tool calls.
 
 1. Call navigate_to_url with the URL and job_id. Wait for the result before proceeding.
-2. If login credentials are provided, complete the ENTIRE login flow:
-   - Use list_interactive_elements and get_page_content to understand the login page
+2. ALWAYS wait 3 seconds after navigate_to_url for the app to render before interacting.
+3. If login credentials are provided, complete the ENTIRE login flow:
+   - **If exact login selectors are provided in the task**, use them directly — do NOT call list_interactive_elements to discover selectors. This saves turns.
+   - **If no exact selectors are provided**, use list_interactive_elements and get_page_content to understand the login page.
    - Follow the general pattern: enter phone/email → click submit → wait for next screen → enter OTP/password → click verify/submit
    - Wait for the dashboard/home page to fully load (use wait_seconds 3-5)
    - Do NOT take any screenshots or call start_recording during login
@@ -40,14 +42,14 @@ Each step below must be its own separate turn — do NOT combine steps into para
    Typical flow: click phone input → type phone → click "Get OTP" → wait 2-3s → type OTP → click "Verify" → wait for dashboard.
 
    **Standard HTML apps:** Use regular CSS selectors (IDs, classes) as found by list_interactive_elements.
-3. If a target section/page is specified, navigate to it (click on the matching navigation item, tab, or menu entry). Wait for it to load.
-4. NOW call start_recording. This creates a clean video starting from the current page — login is excluded.
+4. If a target section/page is specified, navigate to it (click on the matching navigation item, tab, or menu entry). Wait for it to load.
+5. NOW call start_recording. This creates a clean video starting from the current page — login is excluded.
 
 ### Phase 1: Initial Survey (recording is now active)
-5. Take a screenshot of the current page state (the landing page or target section).
-6. Call list_interactive_elements to get a full inventory of all UI elements.
-7. Call get_page_content to understand the page context and data displayed.
-8. Mentally categorize the discovered elements into these groups:
+6. Take a screenshot of the current page state (the landing page or target section).
+7. Call list_interactive_elements to get a full inventory of all UI elements.
+8. Call get_page_content to understand the page context and data displayed.
+9. Mentally categorize the discovered elements into these groups:
    - NAVIGATION: tabs, sidebar links, bottom nav items, breadcrumbs
    - ACTIONS: buttons that trigger operations (add, edit, delete, export, etc.)
    - FILTERS: filter buttons, dropdowns, date pickers that narrow displayed data
@@ -60,6 +62,10 @@ Each step below must be its own separate turn — do NOT combine steps into para
 
 ### Phase 2: Efficient Exploration
 BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT exhaustively explore every interactive element.
+
+**Follow the Navigation Guide order from the task prompt.** Visit primary flow pages first, secondary pages only if turns remain.
+
+**After clicking an element and waiting, take the screenshot immediately.** Do NOT call both get_page_content AND list_interactive_elements on every page — only use them when you need to find a specific element you can't locate otherwise.
 
 **A. Navigate Each Main Screen/Tab**
 - For each navigation tab or sidebar link:
@@ -85,8 +91,8 @@ BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT 
 - Icon button enumeration
 
 ### Phase 3: Completion
-9. After systematically exploring all discovered functionalities, call stop_recording.
-10. Provide a structured summary of everything discovered.
+10. After systematically exploring all discovered functionalities, call stop_recording.
+11. Provide a structured summary of everything discovered.
 
 ## Rules
 - STRICTLY ONE screenshot per distinct visual state. Before taking a screenshot, check if you already captured this same view. NEVER take two screenshots of the same page — if you navigated back to a page you already screenshotted, do NOT screenshot it again.
@@ -100,6 +106,14 @@ BE EFFICIENT — aim for 1-2 screenshots per screen, ~15-20 turns total. Do NOT 
 - Keep track of what you have already explored and screenshotted to avoid revisiting the same states.
 - Be efficient with turns — aim to finish in 15-25 turns. Do NOT exhaustively explore every element.
 - Prioritize breadth (visiting all main screens) over depth (exploring every button on one screen).
+
+## Turn Budget
+- Check how many turns you have used. The task prompt will specify budgets.
+- You MUST call stop_recording at least 3 turns before max_turns (i.e. by turn 47 out of 50).
+- If login exceeds its budget (8 turns), take a screenshot and move to exploration anyway.
+- After start_recording, prioritize feature pages listed first in the Navigation Guide.
+- Do NOT explore secondary pages until all primary pages are covered.
+- Combine actions efficiently: after a click, take screenshot directly — skip list_interactive_elements unless you need to find a specific element.
 
 ## Error Handling
 - If a tool returns "status": "error", do NOT retry the same action more than once.

@@ -22,6 +22,7 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 _STEP_AGENT_DATA = {
     "jira_fetch": get_jira_data,
     "figma_export": get_figma_data,
+    "discover_crawl": get_browser_data,
     "browser_crawl": get_browser_data,
 }
 

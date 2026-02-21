@@ -2,18 +2,28 @@
   "staging_urls": {
     "fina-customer-panel": {
       "url": "https://customer.silqfi.xyz",
+      "app_type": "flutter",
       "phone": "966519002314",
-      "password": "6666"
+      "otp": "6666",
+      "login_selectors": {
+        "phone_input": "[flt-semantics-identifier=\"phone-number-input\"] input",
+        "get_otp_button": "Get OTP",
+        "otp_input": "#one-time-code",
+        "verify_button": "Verify",
+        "login_success_indicator": "Dashboard"
+      }
     },
     "fina-merchant-panel": {
       "url": "https://merchant-fina.silqfi.xyz",
+      "app_type": "html",
       "phone": "966567127230",
-      "password": "6666"
+      "otp": "6666"
     },
     "fina-internal-panel": {
       "url": "https://internal.silqfi.xyz",
+      "app_type": "html",
       "phone": "966500009999",
-      "password": "6666"
+      "otp": "6666"
     }
   }
 }

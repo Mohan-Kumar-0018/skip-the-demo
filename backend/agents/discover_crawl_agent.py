@@ -53,11 +53,17 @@ def _is_logged_in(page_content: dict | str) -> bool:
 
 
 async def _login_and_capture_home(
-    job_id: str, url: str, creds: dict
+    job_id: str, url: str, creds: dict, output_dir: str | None = None
 ) -> dict[str, Any]:
     """Phase 1: Deterministic login — no Claude calls. Calls browser tools directly."""
     logger.info("Navigating to %s", url)
     await navigate_to_url(url, job_id)
+
+    # Override session output_dir so screenshots land in the right place
+    if output_dir:
+        from tools.browser_tools import _sessions
+        if job_id in _sessions:
+            _sessions[job_id]["output_dir"] = output_dir
     await wait_seconds(5, job_id)  # Wait for SPA/Flutter apps to fully load
 
     # Check if already logged in
@@ -527,12 +533,11 @@ async def _crawl_execute_tool(name: str, input: dict) -> str | dict | list:
 
 
 async def _crawl_with_flows(
-    job_id: str, flows: list[dict]
+    job_id: str, flows: list[dict], output_dir: str | None = None
 ) -> dict[str, Any]:
     """Phase 3: Crawl using the existing browser session (already logged in)."""
-    # Redirect output to outputs/uat_screenshots
     from tools.browser_tools import _sessions
-    output_dir = "outputs/uat_screenshots"
+    output_dir = output_dir or f"outputs/{job_id}"
     os.makedirs(output_dir, exist_ok=True)
     if job_id in _sessions:
         _sessions[job_id]["output_dir"] = output_dir
@@ -630,6 +635,7 @@ async def run_discover_crawl(
     job_id: str,
     kb_key: str,
     figma_images_dir: str | None = None,
+    output_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run the 3-phase discover-crawl pipeline.
 
@@ -640,6 +646,8 @@ async def run_discover_crawl(
     Returns:
         Dict with summary, data (login/navigation/crawl results), and aggregated usage.
     """
+    output_dir = output_dir or f"outputs/{job_id}"
+
     # KB lookup
     kb_entry = get_knowledge("staging_urls", kb_key)
     if isinstance(kb_entry, dict) and "error" in kb_entry:
@@ -650,7 +658,7 @@ async def run_discover_crawl(
 
     # Phase 1: Login + home screenshot
     logger.info("Phase 1: Login and capture home page for %s", kb_key)
-    login_result = await _login_and_capture_home(job_id, url, creds)
+    login_result = await _login_and_capture_home(job_id, url, creds, output_dir)
 
     if not login_result.get("login_verified", True):
         logger.warning("Phase 1 login not verified — home screenshot may be a login page")
@@ -666,7 +674,7 @@ async def run_discover_crawl(
 
     # Phase 3: Full crawl with flows (reuses existing browser session — already logged in)
     logger.info("Phase 3: Browser crawl with %d discovered flows", len(flows))
-    crawl_result = await _crawl_with_flows(job_id, flows)
+    crawl_result = await _crawl_with_flows(job_id, flows, output_dir)
 
     # Aggregate usage
     usage = _aggregate_usage(

@@ -748,7 +748,7 @@ def assemble_results(run_id: str) -> dict[str, Any]:
     outputs = get_all_step_outputs(run_id)
 
     jira_out = outputs.get("jira_fetch", {})
-    browser_out = outputs.get("browser_crawl", {})
+    browser_out = outputs.get("discover_crawl", outputs.get("browser_crawl", {}))
     vision_out = outputs.get("design_compare", {})
     synthesis_out = outputs.get("synthesis", {})
     slack_out = outputs.get("slack_delivery", {})

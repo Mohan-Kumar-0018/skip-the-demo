@@ -9,13 +9,13 @@ from typing import Any
 import anthropic
 
 from agent_runner import calc_cost
-from agents.browser_agent import run_browser_agent
+from agents.discover_crawl_agent import run_discover_crawl
 from agents.figma_agent import run_figma_agent
 from agents.jira_agent import run_jira_agent
-from agents.navigation_planner_agent import plan_navigation
 from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
-from agents.vision_agent import compare_design_vs_reality
+from agents.demo_video_agent import generate_demo_video
+from agents.score_evaluator_agent import evaluate_scores
 from db.models import (
     get_browser_data,
     get_figma_data,
@@ -37,7 +37,7 @@ from utils.pdf_parser import extract_text
 logger = logging.getLogger(__name__)
 
 # Steps that abort the whole pipeline on failure
-CRITICAL_STEPS = {"jira_fetch", "browser_crawl"}
+CRITICAL_STEPS = {"jira_fetch", "discover_crawl"}
 
 
 class StepValidationError(Exception):
@@ -63,11 +63,11 @@ STEP_PROGRESS = {
     "jira_fetch": (5, 15),
     "prd_parse": (15, 20),
     "figma_export": (20, 28),
-    "nav_plan": (28, 33),
-    "browser_crawl": (33, 60),
-    "design_compare": (60, 75),
-    "synthesis": (75, 90),
-    "slack_delivery": (90, 98),
+    "discover_crawl": (20, 60),
+    "design_compare": (60, 72),
+    "demo_video": (60, 72),
+    "synthesis": (72, 88),
+    "slack_delivery": (88, 98),
 }
 
 
@@ -76,9 +76,9 @@ STEP_LABELS = {
     "data_cleanup": "Cleaning up ticket data...",
     "prd_parse": "Parsing PRD...",
     "figma_export": "Exporting Figma designs...",
-    "nav_plan": "Planning navigation flow...",
-    "browser_crawl": "Crawling staging app...",
+    "discover_crawl": "Discovering and crawling app...",
     "design_compare": "Comparing designs...",
+    "demo_video": "Generating demo video...",
     "synthesis": "Generating summary...",
     "slack_delivery": "Delivering to Slack...",
 }
@@ -369,155 +369,77 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     return f"Exported {len(all_exported)} images from {len(design_links)} Figma links"
 
 
-async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
-    figma = get_figma_data(run_id)
-    figma_images: list[dict] = []
+async def _execute_discover_crawl(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] discover_crawl: starting", run_id)
 
-    if figma:
-        exported = figma.get("exported_images", [])
-        if isinstance(exported, str):
-            exported = json.loads(exported)
-        for img in exported:
-            path = img.get("path", "") if isinstance(img, dict) else str(img)
-            basename = os.path.basename(path) if path else ""
-            if path and basename.startswith("figma") and basename.endswith(".png") and os.path.isfile(path):
-                name = img.get("name", basename) if isinstance(img, dict) else basename
-                figma_images.append({"path": path, "name": name})
+    # Resolve kb_key from upstream steps
+    kb_key: str | None = None
 
-    if not figma_images:
-        save_step_output(run_id, "nav_plan", {"nav_screens": []})
-        return "Skipped — no Figma design images available"
+    # 1. Check detected_panel from jira_fetch
+    jira_out = get_step_output(run_id, "jira_fetch")
+    if jira_out:
+        kb_key = jira_out.get("detected_panel")
 
-    prd_out = get_step_output(run_id, "prd_parse")
-    prd_text = prd_out.get("prd_text", "") if prd_out else ""
+    # 2. Check detected_panel from figma_export
+    if not kb_key:
+        figma_out = get_step_output(run_id, "figma_export")
+        if figma_out:
+            kb_key = figma_out.get("detected_panel")
 
-    result = plan_navigation(figma_images, prd_text)
-    _save_usage(run_id, "nav_planner", result)
-
-    if result.get("error_code"):
-        logger.warning("[%s] nav_plan: agent returned error: %s", run_id, result.get("summary"))
-        save_step_output(run_id, "nav_plan", {"nav_screens": []})
-        return f"Nav plan error: {result.get('summary', 'unknown')}"
-
-    screens = result.get("screens") or []
-    save_step_output(run_id, "nav_plan", {"nav_screens": screens})
-    return f"Navigation plan created: {len(screens)} screens identified"
-
-
-async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
-    logger.info("[%s] browser_crawl: starting", run_id)
-    staging_url = params.get("staging_url", "")
-    kb_entry: dict | None = None
-    url_source = ""
-
-    # 1. Planner params
-    if staging_url:
-        url_source = "planner params"
-
-    # 2. Jira custom field
-    if not staging_url:
+    # 3. Try to find KB entry by matching staging URL from Jira data
+    if not kb_key:
         jira = get_jira_data(run_id)
-        if jira and jira.get("staging_url"):
-            staging_url = jira["staging_url"]
-            url_source = "jira custom field"
+        staging_url = jira.get("staging_url", "") if jira else ""
+        if staging_url:
+            all_urls = get_knowledge("staging_urls")
+            if isinstance(all_urls, dict) and "error" not in all_urls:
+                for key, entry in all_urls.items():
+                    if isinstance(entry, dict) and entry.get("url") == staging_url:
+                        kb_key = key
+                        break
 
-    # 3. Detected panel from upstream steps (jira / figma)
-    if not staging_url:
-        detected_panel = None
-        jira_out = get_step_output(run_id, "jira_fetch")
-        if jira_out:
-            detected_panel = jira_out.get("detected_panel")
-        if not detected_panel:
-            figma_out = get_step_output(run_id, "figma_export")
-            if figma_out:
-                detected_panel = figma_out.get("detected_panel")
-        if detected_panel:
-            entry = get_knowledge("staging_urls", detected_panel)
-            if isinstance(entry, dict) and "url" in entry:
-                staging_url = entry["url"]
-                kb_entry = {"key": detected_panel, **entry}
-                url_source = f"detected panel: {detected_panel}"
-
-    if not staging_url:
+    if not kb_key:
         raise StepValidationError(
-            "No staging URL found — checked Jira ticket, step params, and knowledge base. "
+            "No staging panel found — checked Jira ticket, Figma export, and knowledge base. "
             "Add a staging URL to the Jira ticket or knowledge base before running the pipeline."
         )
 
-    logger.info("[%s] browser_crawl: resolved URL via %s -> %s", run_id, url_source, staging_url)
+    logger.info("[%s] discover_crawl: resolved kb_key=%s", run_id, kb_key)
 
-    # Build credentials — prefer per-entry creds from KB match
-    creds_text = ""
-    if kb_entry and (kb_entry.get("phone") or kb_entry.get("password")):
-        parts = []
-        if kb_entry.get("phone"):
-            parts.append(f"  phone: {kb_entry['phone']}")
-        if kb_entry.get("password"):
-            parts.append(f"  password: {kb_entry['password']}")
-        creds_text = "\n\nLogin credentials:\n" + "\n".join(parts)
-    else:
-        creds = get_knowledge("credentials")
-        if isinstance(creds, dict) and "error" not in creds:
-            staging_creds = creds.get("staging")
-            if isinstance(staging_creds, dict):
-                creds_text = "\n\nLogin credentials:\n" + "\n".join(
-                    f"  {k}: {v}" for k, v in staging_creds.items()
-                )
+    # Check for Figma images
+    figma_images_dir = f"outputs/{run_id}/figma"
+    has_figma = os.path.isdir(figma_images_dir) and any(
+        f.lower().endswith(".png") for f in os.listdir(figma_images_dir)
+    )
+    if not has_figma:
+        figma_images_dir = None
 
-    # Build navigation guidance from nav_plan if available
-    nav_guidance = ""
-    nav_plan_out = get_step_output(run_id, "nav_plan")
-    nav_screens = nav_plan_out.get("nav_screens", []) if nav_plan_out else []
-    if nav_screens:
-        screen_names = [s.get("name", "Unknown") for s in nav_screens]
-        nav_guidance = (
-            f"\n\nPages to visit (from design analysis): {', '.join(screen_names)}\n"
-            "Make sure to navigate to each of these pages and capture screenshots."
-        )
+    output_dir = f"outputs/{run_id}"
 
-    task = (
-        f"Explore the web application at {staging_url}.\n"
-        f"Job ID: {run_id}\n"
-        f"Output directory: outputs/{run_id}/browser/\n"
-        f"{creds_text}\n\n"
-        f"## CRITICAL: URL Restriction\n"
-        f"You MUST only navigate to {staging_url} and pages within its origin. Do NOT navigate to:\n"
-        f"- Figma links, design URLs, or any figma.com URLs\n"
-        f"- Any external URLs found on pages (e.g. documentation, support links, third-party services)\n"
-        f"- URLs from the Jira ticket, PRD, or design context\n"
-        f"Navigate within the app using clicks (click_element, click_by_text), NOT by calling navigate_to_url with new URLs. "
-        f"The only exception is if you need to return to {staging_url} after getting lost.\n\n"
-        "Instructions:\n"
-        "1. Navigate to the URL and log in if credentials are provided\n"
-        "2. Start recording after login completes\n"
-        "3. Visit each main navigation section/tab — take ONE screenshot per screen\n"
-        "4. Open ONE detail view and ONE action form per section (dismiss without submitting)\n"
-        "5. Prioritize breadth over depth — cover all sections before exploring sub-features\n"
-        "6. Stop recording when all main sections are covered\n"
-        "7. Provide a structured summary of pages and flows discovered\n\n"
-        "Error recovery:\n"
-        "- If a click fails, try click_by_text with the element's visible text\n"
-        "- If navigation breaks, go back to the last known good page and continue\n"
-        "- Skip elements that fail twice — move on to the next section"
-        f"{nav_guidance}"
+    result = await run_discover_crawl(run_id, kb_key, figma_images_dir, output_dir)
+    _save_usage(run_id, "discover_crawl", result)
+
+    # Extract crawl data from nested result
+    crawl_data = result.get("data", {}).get("crawl", {}).get("data", {})
+    screenshot_paths = crawl_data.get("screenshot_paths", [])
+    video_path_raw = crawl_data.get("video_path", "")
+
+    logger.info(
+        "[%s] discover_crawl: %d screenshots, video=%s",
+        run_id, len(screenshot_paths), bool(video_path_raw),
     )
 
-    result = await run_browser_agent(task)
-    _save_usage(run_id, "browser", result)
-
-    browser_data = result["data"]
-    _validate_browser_result(browser_data)
-    logger.info("[%s] browser_crawl: visited %d URLs, %d screenshots, video=%s", run_id, len(browser_data.get("urls_visited", [])), len(browser_data.get("screenshot_paths", [])), bool(browser_data.get("video_path")))
+    # Save browser data (same schema as old handler)
     save_browser_data(run_id, {
-        "urls_visited": browser_data.get("urls_visited", []),
-        "page_titles": browser_data.get("page_titles", []),
-        "screenshot_paths": browser_data.get("screenshot_paths", []),
-        "video_path": browser_data.get("video_path", ""),
-        "page_content": browser_data.get("page_content", ""),
-        "interactive_elements": browser_data.get("interactive_elements", []),
+        "urls_visited": [],
+        "page_titles": [],
+        "screenshot_paths": screenshot_paths,
+        "video_path": video_path_raw or "",
+        "page_content": "",
+        "interactive_elements": crawl_data.get("interactive_elements", []),
     })
 
-    # Collect screenshots and video for step outputs
+    # Collect screenshots and video from filesystem
     screenshots: list[str] = []
     video_path = ""
     screenshots_dir = f"outputs/{run_id}/screenshots"
@@ -533,87 +455,144 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
         if video_files:
             video_path = f"{video_dir}/{video_files[0]}"
 
-    save_step_output(run_id, "browser_crawl", {
+    save_step_output(run_id, "discover_crawl", {
         "screenshots": screenshots,
         "video_path": video_path,
     })
 
-    return result["summary"]
+    return result.get("summary", "") if isinstance(result.get("summary"), str) else json.dumps(result.get("summary", ""))
 
 
-async def _execute_vision(run_id: str, ticket_id: str, params: dict) -> str:
-    logger.info("[%s] design_compare: starting", run_id)
-    # Find design image: prefer Figma export, fallback to Jira attachment
-    design_path = None
+async def _execute_score_evaluator(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] design_compare: starting (score_evaluator)", run_id)
 
-    figma = get_figma_data(run_id)
-    if figma:
-        exported = figma.get("exported_images", [])
-        if isinstance(exported, str):
-            exported = json.loads(exported)
-        for img in exported:
-            path = img.get("path", "") if isinstance(img, dict) else str(img)
-            if path and os.path.isfile(path):
-                design_path = path
-                break
+    figma_dir = f"outputs/{run_id}/figma"
+    screenshots_dir = f"outputs/{run_id}/screenshots"
 
-    if not design_path:
-        jira = get_jira_data(run_id)
-        if jira:
-            attachments = jira.get("attachments", [])
-            if isinstance(attachments, str):
-                attachments = json.loads(attachments)
-            for att in attachments:
-                if att.get("category") == "design" and os.path.isfile(att.get("path", "")):
-                    design_path = att["path"]
-                    break
+    has_figma = os.path.isdir(figma_dir) and any(
+        f.lower().endswith(".png") for f in os.listdir(figma_dir)
+    )
+    has_screenshots = os.path.isdir(screenshots_dir) and any(
+        f.lower().endswith(".png") for f in os.listdir(screenshots_dir)
+    )
 
-    # Read screenshots from browser step output
-    browser_out = get_step_output(run_id, "browser_crawl")
-    screenshots = browser_out.get("screenshots", []) if browser_out else []
-
-    if not design_path or not screenshots:
+    if not has_figma or not has_screenshots:
         save_step_output(run_id, "design_compare", {
+            "overall_score": 0,
             "design_score": 0,
+            "screen_coverage": {},
+            "visual_comparison": {},
+            "missing_screens": {},
             "deviations": [],
+            "summary": "Skipped — no design files or no screenshots",
+            "additional_analysis": {},
         })
-        return "Skipped — no design file or no screenshots"
-
-    with open(design_path, "rb") as f:
-        design_bytes = f.read()
+        return "Skipped — no design files or no screenshots"
 
     try:
-        result = compare_design_vs_reality(design_bytes, screenshots)
+        result = evaluate_scores(screenshots_dir, figma_dir)
     except Exception:
-        logger.exception("[%s] design_compare: vision agent failed", run_id)
+        logger.exception("[%s] design_compare: score_evaluator failed", run_id)
         raise
 
-    # Handle graceful error returns from vision agent
-    if result.get("error_code"):
-        logger.warning("[%s] design_compare: agent returned error: %s", run_id, result.get("summary"))
-        save_step_output(run_id, "design_compare", {
-            "design_score": 0,
-            "deviations": [],
-        })
-        return f"Vision error: {result.get('summary', 'unknown')}"
+    overall_score = result.get("overall_score", 0)
+    top_deviations = (
+        result.get("additional_analysis", {}).get("top_deviations", [])
+    )
 
-    logger.info("[%s] design_compare: score=%s, deviations=%d", run_id, result.get("score"), len(result.get("deviations", [])))
+    logger.info(
+        "[%s] design_compare: overall_score=%d, coverage=%d, visual=%d, %d top deviations",
+        run_id,
+        overall_score,
+        result.get("screen_coverage", {}).get("score", 0),
+        result.get("visual_comparison", {}).get("score", 0),
+        len(top_deviations),
+    )
+
     save_step_output(run_id, "design_compare", {
-        "design_score": result["score"],
-        "deviations": result["deviations"],
+        "overall_score": overall_score,
+        "design_score": overall_score,  # backward compat for synthesis/slack
+        "screen_coverage": result.get("screen_coverage", {}),
+        "visual_comparison": result.get("visual_comparison", {}),
+        "missing_screens": result.get("missing_screens", {}),
+        "deviations": top_deviations,
+        "summary": result.get("summary", ""),
+        "additional_analysis": result.get("additional_analysis", {}),
     })
 
-    usage = result.pop("usage", {})
+    usage = result.get("usage", {})
     if usage:
         save_token_usage(
-            run_id, "vision",
+            run_id, "score_evaluator",
             usage.get("model", ""),
             usage.get("input_tokens", 0),
             usage.get("output_tokens", 0),
             usage.get("cost_usd", 0),
         )
 
-    return f"Design score: {result['score']}/100, {len(result['deviations'])} deviations"
+    return f"Design score: {overall_score}/100, {len(top_deviations)} deviations ({usage.get('api_calls', 0)} API calls)"
+
+
+async def _execute_demo_video(run_id: str, ticket_id: str, params: dict) -> str:
+    logger.info("[%s] demo_video: starting", run_id)
+
+    browser_out = get_step_output(run_id, "discover_crawl")
+    video_path = browser_out.get("video_path", "") if browser_out else ""
+    screenshots = browser_out.get("screenshots", []) if browser_out else []
+
+    if not video_path or not os.path.isfile(video_path):
+        save_step_output(run_id, "demo_video", {
+            "demo_video_path": "",
+            "processing_stats": {},
+        })
+        return "Skipped — no video recording available"
+
+    # Load action log if saved by browser tools
+    action_log: list[dict] = []
+    action_log_path = f"outputs/{run_id}/video/action_log.json"
+    if os.path.isfile(action_log_path):
+        with open(action_log_path) as f:
+            action_log = json.load(f)
+
+    jira_out = get_step_output(run_id, "jira_fetch")
+    feature_context = jira_out.get("feature_name", "") if jira_out else ""
+
+    output_dir = f"outputs/{run_id}/demo_video"
+
+    try:
+        result = await generate_demo_video(
+            video_path,
+            action_log,
+            screenshot_paths=screenshots or None,
+            feature_context=feature_context,
+            output_dir=output_dir,
+        )
+    except Exception:
+        logger.exception("[%s] demo_video: generate_demo_video failed", run_id)
+        raise
+
+    demo_video_path = result.get("output_video_path", "")
+    stats = result.get("processing_stats", {})
+
+    logger.info("[%s] demo_video: output=%s, stats=%s", run_id, demo_video_path, stats)
+
+    save_step_output(run_id, "demo_video", {
+        "demo_video_path": demo_video_path,
+        "processing_stats": stats,
+    })
+
+    usage = result.get("usage", {})
+    if usage:
+        save_token_usage(
+            run_id, "demo_video",
+            usage.get("model", ""),
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            usage.get("cost_usd", 0),
+        )
+
+    deduped = stats.get("deduped_duration_s", 0)
+    return f"Demo video generated ({deduped}s, {stats.get('click_animations', 0)} click animations)"
 
 
 async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
@@ -625,9 +604,13 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
 
     vision_out = get_step_output(run_id, "design_compare")
     design_result = {
-        "score": vision_out.get("design_score", 0) if vision_out else 0,
+        "score": vision_out.get("overall_score", vision_out.get("design_score", 0)) if vision_out else 0,
         "deviations": vision_out.get("deviations", []) if vision_out else [],
-        "summary": "",
+        "summary": vision_out.get("summary", "") if vision_out else "",
+        "screen_coverage": vision_out.get("screen_coverage", {}) if vision_out else {},
+        "visual_comparison": vision_out.get("visual_comparison", {}) if vision_out else {},
+        "missing_screens": vision_out.get("missing_screens", {}) if vision_out else {},
+        "additional_analysis": vision_out.get("additional_analysis", {}) if vision_out else {},
     }
 
     try:
@@ -667,16 +650,23 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
 async def _execute_slack(run_id: str, ticket_id: str, params: dict) -> str:
     # Read all upstream outputs from DB
     jira_out = get_step_output(run_id, "jira_fetch")
-    browser_out = get_step_output(run_id, "browser_crawl")
+    browser_out = get_step_output(run_id, "discover_crawl")
     vision_out = get_step_output(run_id, "design_compare")
     synthesis_out = get_step_output(run_id, "synthesis")
+    demo_video_out = get_step_output(run_id, "demo_video")
 
     feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
-    design_score = vision_out.get("design_score", 0) if vision_out else 0
+    design_score = vision_out.get("overall_score", vision_out.get("design_score", 0)) if vision_out else 0
     deviations = vision_out.get("deviations", []) if vision_out else []
     summary = synthesis_out.get("summary", "") if synthesis_out else ""
     release_notes = synthesis_out.get("release_notes", "") if synthesis_out else ""
-    video_path = browser_out.get("video_path", "") if browser_out else ""
+
+    # Prefer polished demo video over raw recording
+    video_path = ""
+    if demo_video_out and demo_video_out.get("demo_video_path"):
+        video_path = demo_video_out["demo_video_path"]
+    if not video_path and browser_out:
+        video_path = browser_out.get("video_path", "")
 
     # Build briefing message
     if design_score >= 80:
@@ -726,9 +716,9 @@ _STEP_HANDLERS = {
     "data_cleanup": _execute_data_cleanup,
     "prd_parse": _execute_prd_parse,
     "figma_export": _execute_figma,
-    "nav_plan": _execute_nav_plan,
-    "browser_crawl": _execute_browser,
-    "design_compare": _execute_vision,
+    "discover_crawl": _execute_discover_crawl,
+    "design_compare": _execute_score_evaluator,
+    "demo_video": _execute_demo_video,
     "synthesis": _execute_synthesis,
     "slack_delivery": _execute_slack,
 }

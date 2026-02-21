@@ -25,25 +25,25 @@ Available agents:
 - jira: Fetches ticket info, PRD attachments, design files, subtasks, comments from Jira.
 - internal: Internal processing step (e.g. PDF parsing, data cleanup). No LLM call needed.
 - figma: Exports design images from Figma links found in the ticket.
-- nav_planner: Analyzes Figma design screens to produce a navigation flow for the browser agent.
-- browser: Explores a staging URL with Playwright, takes screenshots, records demo video.
-- vision: Compares design images against screenshots using Claude Vision.
+- discover_crawl: 3-phase browser agent — deterministic login, nav discovery from live UI + optional Figma validation, then structured crawl. Takes screenshots and records demo video.
+- score_evaluator: Multi-phase design comparison (screen inventory, matching, visual fidelity scoring, detailed analysis).
+- demo_video: Post-processes raw browser recording into polished demo video with dedup, click animations, narration, and subtitles.
 - synthesis: Generates PM summary and release notes using Claude.
 - slack: Posts briefing message and uploads video to Slack.
 
 Rules:
 1. jira_fetch is ALWAYS the first step.
 2. figma_export depends on jira_fetch (needs Figma URLs from ticket).
-3. nav_plan depends on figma_export (analyzes exported design screens to plan navigation).
-4. browser_crawl depends on jira_fetch and nav_plan (needs staging URL + navigation guidance).
-5. design_compare depends on browser_crawl and figma_export (needs screenshots + design).
+3. discover_crawl depends on jira_fetch and figma_export (needs staging URL + optional Figma designs for nav validation).
+4. design_compare depends on discover_crawl and figma_export (needs screenshots + design).
+5. demo_video depends on discover_crawl (post-processes the raw recording). Runs in PARALLEL with design_compare.
 6. synthesis depends on design_compare (needs scores + PRD text).
-7. slack_delivery depends on synthesis (needs the complete briefing).
+7. slack_delivery depends on synthesis AND demo_video (needs briefing + polished video).
 
 Output ONLY a JSON array. Each element must have:
 - step_order (int, 1-based)
-- step_name (string, one of: jira_fetch, figma_export, nav_plan, browser_crawl, design_compare, synthesis, slack_delivery)
-- agent (string, one of: jira, figma, nav_planner, browser, vision, synthesis, slack)
+- step_name (string, one of: jira_fetch, figma_export, discover_crawl, design_compare, demo_video, synthesis, slack_delivery)
+- agent (string, one of: jira, figma, discover_crawl, score_evaluator, demo_video, synthesis, slack)
 - params (object, any extra parameters for the step)
 - depends_on (array of step_name strings this step waits for)
 
