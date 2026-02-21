@@ -28,6 +28,7 @@ from db.models import (
     upsert_step,
 )
 from tools.kb_tools import get_knowledge, search_knowledge
+from utils.adf_parser import adf_to_text
 from utils.pdf_parser import extract_text
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ STEP_PROGRESS = {
 
 STEP_LABELS = {
     "jira_fetch": "Fetching Jira ticket...",
+    "data_cleanup": "Cleaning up ticket data...",
     "prd_parse": "Parsing PRD...",
     "figma_export": "Exporting Figma designs...",
     "nav_plan": "Planning navigation flow...",
@@ -170,6 +172,24 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     save_step_output(run_id, "jira_fetch", {"feature_name": feature_name})
 
     return result["summary"]
+
+
+async def _execute_data_cleanup(run_id: str, ticket_id: str, params: dict) -> str:
+    jira = get_jira_data(run_id)
+    if not jira:
+        return "No Jira data to clean"
+
+    raw_desc = jira.get("ticket_description", "")
+    if not raw_desc:
+        return "No ticket description to clean"
+
+    cleaned = adf_to_text(raw_desc)
+
+    # Write back only the cleaned description
+    jira["ticket_description"] = cleaned
+    save_jira_data(run_id, jira)
+
+    return f"Cleaned ticket description ({len(cleaned)} chars)"
 
 
 async def _execute_prd_parse(run_id: str, ticket_id: str, params: dict) -> str:
@@ -499,6 +519,7 @@ async def _execute_slack(run_id: str, ticket_id: str, params: dict) -> str:
 
 _STEP_HANDLERS = {
     "jira_fetch": _execute_jira,
+    "data_cleanup": _execute_data_cleanup,
     "prd_parse": _execute_prd_parse,
     "figma_export": _execute_figma,
     "nav_plan": _execute_nav_plan,

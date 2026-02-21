@@ -11,7 +11,9 @@
       "Bash(make test-jira:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(find:*)",
+      "Bash(make:*)"
     ]
   }
 }
