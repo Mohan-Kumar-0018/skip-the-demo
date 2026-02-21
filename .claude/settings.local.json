@@ -13,7 +13,9 @@
       "Bash(make:*)",
       "Bash(npx tsc:*)",
       "Bash(npx vite:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "Bash(grep:*)"
     ]
   }
 }

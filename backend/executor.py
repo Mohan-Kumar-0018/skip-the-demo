@@ -49,14 +49,6 @@ def _validate_jira_result(jira_data: dict) -> None:
         raise StepValidationError("Jira agent returned no ticket title")
 
 
-def _validate_browser_result(browser_data: dict) -> None:
-    urls = browser_data.get("urls_visited") or []
-    screenshots = browser_data.get("screenshot_paths") or []
-    if not urls and not screenshots:
-        raise StepValidationError(
-            "Browser agent returned no URLs visited and no screenshots"
-        )
-
 # Progress percentages for each step
 STEP_PROGRESS = {
     "jira_fetch": (5, 15),

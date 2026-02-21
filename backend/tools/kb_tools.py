@@ -32,15 +32,6 @@ def get_knowledge(category: str, key: str | None = None) -> Any:
     return entry
 
 
-def get_navigation_flow(kb_key: str) -> dict | None:
-    """Retrieve structured navigation flow for a given app key.
-
-    Returns the flow dict (app_type, login, sections) or None if not found.
-    """
-    kb = _load_kb()
-    return kb.get("navigation_flows", {}).get(kb_key)
-
-
 def search_knowledge(query: str) -> list[dict[str, Any]]:
     """Search across the entire knowledge base for entries matching a query string.
 
