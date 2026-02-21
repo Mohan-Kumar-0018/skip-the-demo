@@ -16,7 +16,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 
-AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma"]
+AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma", "nav_planner", "discover_crawl"]
 
 
 async def main():
@@ -129,6 +129,67 @@ async def main():
         from agents.figma_agent import run_figma_agent
 
         result = await run_figma_agent(prompt)
+
+    elif agent == "nav_planner":
+        from agents.navigation_planner_agent import plan_navigation
+
+        images_dir = os.environ.get("IMAGES_DIR", "")
+        if not images_dir or not os.path.isdir(images_dir):
+            print("nav_planner agent requires IMAGES_DIR env var (directory with design PNGs).")
+            print('Example: make test-nav IMAGES_DIR=outputs/23d8c274 PROMPT="Supplier discovery feature"')
+            sys.exit(1)
+        figma_images = [
+            {"path": os.path.join(images_dir, f), "name": f}
+            for f in sorted(os.listdir(images_dir))
+            if f.startswith("figma") and f.endswith(".png")
+        ]
+        if not figma_images:
+            print(f"No figma*.png files found in {images_dir}")
+            sys.exit(1)
+        print(f"  Images:  {len(figma_images)} PNGs from {images_dir}")
+        print()
+        raw = plan_navigation(figma_images, prompt)
+        result = json.dumps(raw, indent=2)
+
+    elif agent == "discover_crawl":
+        from agents.discover_crawl_agent import run_discover_crawl
+
+        kb_key = os.environ.get("KB_KEY")
+        if not kb_key:
+            print("discover_crawl agent requires KB_KEY env var.")
+            print('Example: make test-discover KB_KEY=fina-customer-panel')
+            sys.exit(1)
+
+        figma_dir = os.environ.get("FIGMA_DIR") or None
+
+        # Derive job_id from figma output directory (e.g. "outputs/23d8c274" -> "23d8c274")
+        if figma_dir:
+            job_id = os.path.basename(figma_dir.rstrip("/"))
+        else:
+            job_id = os.environ.get("JOB_ID", "")
+            if not job_id:
+                print("discover_crawl agent requires FIGMA_DIR or JOB_ID env var.")
+                print('Example: make test-discover KB_KEY=fina-customer-panel FIGMA_DIR=outputs/23d8c274')
+                sys.exit(1)
+
+        print(f"  Job ID:    {job_id}")
+        print(f"  KB Key:    {kb_key}")
+        if figma_dir:
+            print(f"  Figma Dir: {figma_dir}")
+        print()
+
+        raw = await run_discover_crawl(job_id, kb_key, figma_dir)
+        crawl_data = raw.get("data", {}).get("crawl", {}).get("data", {})
+        result = json.dumps(
+            {
+                "crawl_result": raw.get("summary", {}),
+                "navigation_flows": raw.get("data", {}).get("navigation", {}).get("flows", []),
+                "screenshots": crawl_data.get("screenshot_paths", []),
+                "video": crawl_data.get("video_path"),
+                "usage": raw.get("usage", {}),
+            },
+            indent=2,
+        )
 
     else:
         print(f"Unknown agent: {agent}. Choose from: {', '.join(AGENTS)}")

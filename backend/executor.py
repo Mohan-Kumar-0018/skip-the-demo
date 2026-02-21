@@ -9,6 +9,7 @@ from typing import Any
 from agents.browser_agent import run_browser_agent
 from agents.figma_agent import run_figma_agent
 from agents.jira_agent import run_jira_agent
+from agents.navigation_planner_agent import plan_navigation
 from agents.slack_agent import run_slack_agent
 from agents.synthesis_agent import generate_pm_summary
 from agents.vision_agent import compare_design_vs_reality
@@ -34,10 +35,24 @@ logger = logging.getLogger(__name__)
 # Steps that abort the whole pipeline on failure
 CRITICAL_STEPS = {"jira_fetch", "browser_crawl"}
 
+# Progress percentages for each step
+STEP_PROGRESS = {
+    "jira_fetch": (5, 15),
+    "prd_parse": (15, 20),
+    "figma_export": (20, 28),
+    "nav_plan": (28, 33),
+    "browser_crawl": (33, 60),
+    "design_compare": (60, 75),
+    "synthesis": (75, 90),
+    "slack_delivery": (90, 98),
+}
+
+
 STEP_LABELS = {
     "jira_fetch": "Fetching Jira ticket...",
     "prd_parse": "Parsing PRD...",
     "figma_export": "Exporting Figma designs...",
+    "nav_plan": "Planning navigation flow...",
     "browser_crawl": "Crawling staging app...",
     "design_compare": "Comparing designs...",
     "synthesis": "Generating summary...",
@@ -208,6 +223,39 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     return result["summary"]
 
 
+async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
+    figma = get_figma_data(run_id)
+    figma_images: list[dict] = []
+
+    if figma:
+        exported = figma.get("exported_images", [])
+        if isinstance(exported, str):
+            exported = json.loads(exported)
+        for img in exported:
+            path = img.get("path", "") if isinstance(img, dict) else str(img)
+            basename = os.path.basename(path) if path else ""
+            if path and basename.startswith("figma") and basename.endswith(".png") and os.path.isfile(path):
+                name = img.get("name", basename) if isinstance(img, dict) else basename
+                figma_images.append({"path": path, "name": name})
+
+    if not figma_images:
+        save_step_output(run_id, "nav_plan", {"nav_screens": []})
+        return "Skipped — no Figma design images available"
+
+    # Get context from Jira data
+    jira = get_jira_data(run_id)
+    prd_text = ""
+    if jira:
+        prd_text = jira.get("prd_text", "") or jira.get("ticket_description", "")
+
+    result = plan_navigation(figma_images, prd_text)
+    _save_usage(run_id, "nav_planner", result)
+
+    screens = result.get("screens") or []
+    save_step_output(run_id, "nav_plan", {"nav_screens": screens})
+    return f"Navigation plan created: {len(screens)} screens identified"
+
+
 async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     # Get staging URL from params, Jira data, or KB
     staging_url = params.get("staging_url", "")
@@ -239,6 +287,17 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
                 f"  {k}: {v}" for k, v in staging_creds.items()
             )
 
+    # Build navigation guidance from nav_plan if available
+    nav_guidance = ""
+    nav_plan_out = get_step_output(run_id, "nav_plan")
+    nav_screens = nav_plan_out.get("nav_screens", []) if nav_plan_out else []
+    if nav_screens:
+        screen_names = [s.get("name", "Unknown") for s in nav_screens]
+        nav_guidance = (
+            f"\n\nPages to visit (from design analysis): {', '.join(screen_names)}\n"
+            "Make sure to navigate to each of these pages and capture screenshots."
+        )
+
     task = (
         f"Explore the web application at {staging_url} thoroughly.\n"
         f"Job ID: {run_id}\n"
@@ -253,6 +312,7 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
         "6. Take a screenshot after each navigation\n"
         "7. When you've explored all pages, stop the recording\n"
         "8. Provide a summary of all pages and flows discovered"
+        f"{nav_guidance}"
     )
 
     result = await run_browser_agent(task)
@@ -441,6 +501,7 @@ _STEP_HANDLERS = {
     "jira_fetch": _execute_jira,
     "prd_parse": _execute_prd_parse,
     "figma_export": _execute_figma,
+    "nav_plan": _execute_nav_plan,
     "browser_crawl": _execute_browser,
     "design_compare": _execute_vision,
     "synthesis": _execute_synthesis,

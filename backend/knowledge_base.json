@@ -9,7 +9,11 @@
       "url": "https://merchant-fina.silqfi.xyz",
       "phone": "966567127230",
       "password": "6666"
+    },
+    "fina-internal-panel": {
+      "url": "https://internal.silqfi.xyz",
+      "phone": "966500009999",
+      "password": "6666"
     }
-
   }
 }

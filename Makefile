@@ -34,6 +34,12 @@ test-slack:
 test-figma:
 	$(ACTIVATE) && python test_agent.py figma "$(PROMPT)"
 
+## Discover-Crawl Agent — login, discover nav, full crawl using KB credentials
+## Example: make test-discover KB_KEY=fina-customer-panel
+## Example with Figma: make test-discover KB_KEY=fina-customer-panel FIGMA_DIR=outputs/23d8c274
+test-discover:
+	$(ACTIVATE) && KB_KEY="$(KB_KEY)" FIGMA_DIR="$(FIGMA_DIR)" python test_agent.py discover_crawl "auto"
+
 # ─── Single-shot agents (prompt + env vars for files) ────────
 
 ## Vision Agent — compare design image vs screenshot
@@ -41,6 +47,12 @@ test-figma:
 ## Example: make test-vision DESIGN=outputs/test-SG-238/design.png SCREENSHOT=outputs/test-SG-238/screen_1.png PROMPT="compare"
 test-vision:
 	$(ACTIVATE) && DESIGN="$(DESIGN)" SCREENSHOT="$(SCREENSHOT)" python test_agent.py vision "$(PROMPT)"
+
+## Navigation Planner — analyze Figma design PNGs to produce navigation flow
+## Requires: IMAGES_DIR (directory with design PNGs), PROMPT (PRD text / context)
+## Example: make test-nav IMAGES_DIR=outputs/23d8c274 PROMPT="Supplier discovery feature"
+test-nav:
+	$(ACTIVATE) && IMAGES_DIR="$(IMAGES_DIR)" python test_agent.py nav_planner "$(PROMPT)"
 
 ## Synthesis Agent — generate PM summary + release notes from PRD text
 ## Optional: FEATURE (feature name), DESIGN_RESULT (JSON string with score/deviations)
@@ -77,9 +89,11 @@ help:
 	@echo "  make test-jira       PROMPT=\"...\"                       Jira agent (tickets, subtasks, attachments)"
 	@echo "  make test-browser    PROMPT=\"...\"                       Browser agent (crawl, screenshot, record)"
 	@echo "  make test-browser-page KB_KEY=... PAGE=...              Browser auto-discovery (KB credentials)"
+	@echo "  make test-discover   KB_KEY=... [FIGMA_DIR=...]        Discover-crawl (login + nav + crawl)"
 	@echo "  make test-slack      PROMPT=\"...\"                       Slack agent (post messages, upload files)"
 	@echo "  make test-vision     DESIGN=... SCREENSHOT=... PROMPT=  Vision agent (design vs screenshot)"
 	@echo "  make test-figma      PROMPT=\"...\"                       Figma agent (extract design images)"
+	@echo "  make test-nav        IMAGES_DIR=... PROMPT=\"...\"        Nav planner (design screens → nav flow)"
 	@echo "  make test-synthesis  PROMPT=\"...\" FEATURE=\"...\"         Synthesis agent (PM summary + release notes)"
 	@echo ""
 	@echo "  make run             TICKET=SG-238                      Trigger full pipeline run"

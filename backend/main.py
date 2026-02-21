@@ -30,7 +30,7 @@ from db.models import (
     get_token_usage,
     get_token_usage_summary,
 )
-from orchestrator import run_browser_pipeline, run_pipeline
+from orchestrator import run_browser_pipeline, run_discover_crawl_pipeline, run_pipeline
 from routers.dashboard import router as dashboard_router
 from routers.explorer import router as explorer_router
 from routers.runs import router as runs_router
@@ -63,6 +63,11 @@ class BrowserRunRequest(BaseModel):
     kb_key: str  # e.g. "fina-customer-panel"
 
 
+class DiscoverCrawlRequest(BaseModel):
+    kb_key: str  # e.g. "fina-customer-panel"
+    figma_images_dir: str | None = None
+
+
 class RunResponse(BaseModel):
     job_id: str
 
@@ -75,6 +80,16 @@ async def trigger_browser_run(body: BrowserRunRequest):
     job_id = uuid.uuid4().hex[:8]
     create_run(job_id, body.kb_key)
     asyncio.create_task(run_browser_pipeline(job_id, body.kb_key))
+    return RunResponse(job_id=job_id)
+
+
+@app.post("/run-discover", response_model=RunResponse)
+async def trigger_discover_crawl(body: DiscoverCrawlRequest):
+    job_id = uuid.uuid4().hex[:8]
+    create_run(job_id, body.kb_key)
+    asyncio.create_task(
+        run_discover_crawl_pipeline(job_id, body.kb_key, body.figma_images_dir)
+    )
     return RunResponse(job_id=job_id)
 
 

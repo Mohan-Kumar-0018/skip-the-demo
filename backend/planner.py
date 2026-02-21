@@ -25,6 +25,7 @@ Available agents:
 - jira: Fetches ticket info, PRD attachments, design files, subtasks, comments from Jira.
 - internal: Internal processing step (e.g. PDF parsing, data extraction). No LLM call needed.
 - figma: Exports design images from Figma links found in the ticket.
+- nav_planner: Analyzes Figma design screens to produce a navigation flow for the browser agent.
 - browser: Explores a staging URL with Playwright, takes screenshots, records demo video.
 - vision: Compares design images against screenshots using Claude Vision.
 - synthesis: Generates PM summary and release notes using Claude.
@@ -34,15 +35,16 @@ Rules:
 1. jira_fetch is ALWAYS the first step.
 2. prd_parse depends on jira_fetch (extracts text from downloaded PDFs).
 3. figma_export depends on jira_fetch (needs Figma URLs from ticket).
-4. browser_crawl depends on jira_fetch (needs staging URL).
-5. design_compare depends on browser_crawl and figma_export (needs screenshots + design).
-6. synthesis depends on design_compare and prd_parse (needs scores + PRD text).
-7. slack_delivery depends on synthesis (needs the complete briefing).
+4. nav_plan depends on figma_export (analyzes exported design screens to plan navigation).
+5. browser_crawl depends on jira_fetch and nav_plan (needs staging URL + navigation guidance).
+6. design_compare depends on browser_crawl and figma_export (needs screenshots + design).
+7. synthesis depends on design_compare and prd_parse (needs scores + PRD text).
+8. slack_delivery depends on synthesis (needs the complete briefing).
 
 Output ONLY a JSON array. Each element must have:
 - step_order (int, 1-based)
-- step_name (string, one of: jira_fetch, prd_parse, figma_export, browser_crawl, design_compare, synthesis, slack_delivery)
-- agent (string, one of: jira, internal, figma, browser, vision, synthesis, slack)
+- step_name (string, one of: jira_fetch, prd_parse, figma_export, nav_plan, browser_crawl, design_compare, synthesis, slack_delivery)
+- agent (string, one of: jira, internal, figma, nav_planner, browser, vision, synthesis, slack)
 - params (object, any extra parameters for the step)
 - depends_on (array of step_name strings this step waits for)
 
