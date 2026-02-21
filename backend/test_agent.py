@@ -16,7 +16,7 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 
-AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma", "nav_planner", "discover_crawl", "score_eval"]
+AGENTS = ["jira", "browser", "vision", "synthesis", "slack", "figma", "nav_planner", "discover_crawl", "score_eval", "demo_video"]
 
 
 async def main():
@@ -210,6 +210,52 @@ async def main():
         print(f"  Figma Dir: {figma_dir} ({figma_count} PNGs)")
         print()
         raw = evaluate_scores(uat_dir, figma_dir)
+        result = json.dumps(raw, indent=2)
+
+    elif agent == "demo_video":
+        from agents.demo_video_agent import generate_demo_video
+
+        video = os.environ.get("VIDEO", "")
+        action_log_path = os.environ.get("ACTION_LOG", "")
+        screenshots_dir = os.environ.get("SCREENSHOTS_DIR", "")
+        feature = os.environ.get("FEATURE", "")
+
+        if not video or not os.path.exists(video):
+            print("demo_video agent requires VIDEO env var (path to .webm or .mov file).")
+            print('Example: make test-demo-video VIDEO=outputs/uat_screenshots/abc.webm ACTION_LOG=outputs/uat_screenshots/action_log.json')
+            print('        make test-demo-video VIDEO=path/to/recording.mov ACTION_LOG=outputs/uat_screenshots/action_log.json')
+            sys.exit(1)
+
+        # Load action log
+        action_log = []
+        if action_log_path and os.path.exists(action_log_path):
+            with open(action_log_path) as f:
+                action_log = json.load(f)
+        else:
+            print("Warning: No ACTION_LOG provided. Narration may be limited.")
+
+        # Collect screenshot paths
+        screenshot_paths = []
+        if screenshots_dir and os.path.isdir(screenshots_dir):
+            screenshot_paths = sorted([
+                os.path.join(screenshots_dir, f)
+                for f in os.listdir(screenshots_dir)
+                if f.lower().endswith(".png")
+            ])
+
+        print(f"  Video:        {video}")
+        print(f"  Action Log:   {action_log_path} ({len(action_log)} entries)")
+        print(f"  Screenshots:  {len(screenshot_paths)} PNGs")
+        if feature:
+            print(f"  Feature:      {feature}")
+        print()
+
+        raw = await generate_demo_video(
+            video_path=video,
+            action_log=action_log,
+            screenshot_paths=screenshot_paths or None,
+            feature_context=feature,
+        )
         result = json.dumps(raw, indent=2)
 
     else:

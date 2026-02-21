@@ -296,6 +296,7 @@ async def run_browser_agent(task: str) -> dict[str, Any]:
         "video_path": None,
         "page_content": "",
         "interactive_elements": [],
+        "action_log": [],
     }
 
     async def _collecting_executor(name: str, input: dict) -> str | dict | list:
@@ -318,6 +319,7 @@ async def run_browser_agent(task: str) -> dict[str, Any]:
             collected["interactive_elements"] = result
         elif name == "stop_recording" and isinstance(result, dict):
             collected["video_path"] = result.get("video_path")
+            collected["action_log"] = result.get("action_log", [])
         return result
 
     result = await run_agent_loop(

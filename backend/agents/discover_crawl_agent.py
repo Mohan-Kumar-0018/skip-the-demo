@@ -542,6 +542,7 @@ async def _crawl_with_flows(
         "screenshot_paths": [],
         "video_path": None,
         "interactive_elements": [],
+        "action_log": [],
     }
 
     async def _collecting_executor(name: str, input: dict) -> str | dict | list:
@@ -552,6 +553,7 @@ async def _crawl_with_flows(
             collected["interactive_elements"] = result
         elif name == "stop_recording" and isinstance(result, dict):
             collected["video_path"] = result.get("video_path")
+            collected["action_log"] = result.get("action_log", [])
         return result
 
     # Build page list with exploration instructions

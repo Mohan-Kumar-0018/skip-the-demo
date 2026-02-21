@@ -60,6 +60,14 @@ test-nav:
 test-score-eval:
 	$(ACTIVATE) && UAT_DIR="$(UAT_DIR)" FIGMA_DIR="$(FIGMA_DIR)" python test_agent.py score_eval "evaluate"
 
+## Demo Video Agent — post-process raw .webm/.mov into polished demo .mp4
+## Requires: VIDEO (path to .webm or .mov), ACTION_LOG (path to action_log.json)
+## Optional: SCREENSHOTS_DIR (directory with PNGs), FEATURE (feature description)
+## Example: make test-demo-video VIDEO=outputs/uat_screenshots/abc.webm ACTION_LOG=outputs/uat_screenshots/action_log.json
+## Example: make test-demo-video VIDEO=path/to/recording.mov ACTION_LOG=outputs/uat_screenshots/action_log.json
+test-demo-video:
+	$(ACTIVATE) && VIDEO="$(VIDEO)" ACTION_LOG="$(ACTION_LOG)" SCREENSHOTS_DIR="$(SCREENSHOTS_DIR)" FEATURE="$(FEATURE)" python test_agent.py demo_video "generate"
+
 ## Synthesis Agent — generate PM summary + release notes from PRD text
 ## Optional: FEATURE (feature name), DESIGN_RESULT (JSON string with score/deviations)
 ## Example: make test-synthesis FEATURE="Supplier Discovery" PROMPT="This feature allows users to search and filter suppliers..."
@@ -101,6 +109,7 @@ help:
 	@echo "  make test-figma      PROMPT=\"...\"                       Figma agent (extract design images)"
 	@echo "  make test-nav        IMAGES_DIR=... PROMPT=\"...\"        Nav planner (design screens → nav flow)"
 	@echo "  make test-score-eval UAT_DIR=... FIGMA_DIR=...          Score evaluator (design vs UAT multi-phase)"
+	@echo "  make test-demo-video VIDEO=... ACTION_LOG=...          Demo video generator (raw .webm/.mov → polished .mp4)"
 	@echo "  make test-synthesis  PROMPT=\"...\" FEATURE=\"...\"         Synthesis agent (PM summary + release notes)"
 	@echo ""
 	@echo "  make run             TICKET=SG-238                      Trigger full pipeline run"

@@ -99,7 +99,7 @@ async def run_browser_pipeline(run_id: str, kb_key: str) -> None:
                 for f in sorted(os.listdir(output_dir))
                 if f.endswith(".png")
             ]
-            video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
+            video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
             if video_files:
                 collected["video_path"] = f"{output_dir}/{video_files[0]}"
 
@@ -173,7 +173,7 @@ async def run_discover_crawl_pipeline(
                 for f in sorted(os.listdir(output_dir))
                 if f.endswith(".png")
             ]
-            video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
+            video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
             if video_files:
                 collected["video_path"] = f"{output_dir}/{video_files[0]}"
 

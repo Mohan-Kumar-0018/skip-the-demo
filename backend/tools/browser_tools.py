@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import time
 from typing import Any
 
 from playwright.async_api import Browser, Page, async_playwright, Playwright
@@ -14,6 +16,28 @@ async def _get_session(job_id: str) -> dict[str, Any]:
     if job_id not in _sessions:
         raise RuntimeError(f"No browser session for job {job_id}. Call navigate_to_url first.")
     return _sessions[job_id]
+
+
+def _log_action(
+    session: dict[str, Any],
+    action_type: str,
+    description: str,
+    x: float | None = None,
+    y: float | None = None,
+) -> None:
+    """Record an action in the session's action journal (only if recording is active)."""
+    if "action_log" not in session:
+        return
+    start = session.get("recording_start_time", 0)
+    entry: dict[str, Any] = {
+        "timestamp_ms": int((time.monotonic() - start) * 1000),
+        "action_type": action_type,
+        "description": description,
+    }
+    if x is not None and y is not None:
+        entry["x"] = x
+        entry["y"] = y
+    session["action_log"].append(entry)
 
 
 async def navigate_to_url(url: str, job_id: str) -> dict[str, str]:
@@ -84,6 +108,7 @@ async def type_text(selector: str, text: str, job_id: str) -> dict[str, str]:
         await page.wait_for_timeout(300)  # allow UI to update after typing
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    _log_action(session, "type", f"Typed '{text}' into {selector}")
     return {"status": "ok", "message": f"Typed '{text}' into {selector}"}
 
 
@@ -96,6 +121,7 @@ async def press_key(key: str, job_id: str) -> dict[str, str]:
         await page.wait_for_timeout(200)
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    _log_action(session, "key_press", f"Pressed {key}")
     return {"status": "ok", "message": f"Pressed {key}"}
 
 
@@ -106,6 +132,8 @@ async def click_element(selector: str, job_id: str) -> dict[str, str]:
     el = await page.query_selector(selector)
     if not el:
         return {"status": "error", "message": f"Element not found: {selector}"}
+    # Capture bounding box for action journal before click
+    box = await el.bounding_box()
     try:
         await el.scroll_into_view_if_needed()
         await el.click()
@@ -113,6 +141,9 @@ async def click_element(selector: str, job_id: str) -> dict[str, str]:
         await page.wait_for_load_state("domcontentloaded")
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    cx = box["x"] + box["width"] / 2 if box else None
+    cy = box["y"] + box["height"] / 2 if box else None
+    _log_action(session, "click", f"Clicked {selector}", cx, cy)
     title = await page.title()
     return {"status": "ok", "title": title, "url": page.url}
 
@@ -140,6 +171,7 @@ async def click_by_text(text: str, job_id: str, exact: bool = False) -> dict[str
             return {"status": "error", "message": f"No element found with text: '{text}'"}
         # Click the first visible match
         target = locator.first
+        box = await target.bounding_box()
         await target.scroll_into_view_if_needed()
         await target.click()
         await page.wait_for_timeout(500)
@@ -147,6 +179,9 @@ async def click_by_text(text: str, job_id: str, exact: bool = False) -> dict[str
             await page.wait_for_load_state("domcontentloaded", timeout=3000)
         except Exception:
             pass  # Flutter apps may not trigger network activity
+        cx = box["x"] + box["width"] / 2 if box else None
+        cy = box["y"] + box["height"] / 2 if box else None
+        _log_action(session, "click", f"Clicked text '{text}'", cx, cy)
         title = await page.title()
         return {"status": "ok", "title": title, "url": page.url, "matches": count}
     except Exception as e:
@@ -163,6 +198,7 @@ async def scroll_page(direction: str, amount: int, job_id: str) -> dict[str, str
         await page.wait_for_timeout(300)
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    _log_action(session, "scroll", f"Scrolled {direction} by {amount}px")
     return {"status": "ok", "message": f"Scrolled {direction} by {amount}px"}
 
 
@@ -275,17 +311,23 @@ async def start_recording(job_id: str) -> dict[str, str]:
     session["context"] = new_context
     session["page"] = new_page
 
+    # 5. Initialize action journal
+    session["action_log"] = []
+    session["recording_start_time"] = time.monotonic()
+
     return {"status": "recording", "message": f"Video recording started on {current_url}"}
 
 
-async def stop_recording(job_id: str) -> dict[str, str | None]:
-    """Stop recording and close the browser session. Returns the video path."""
+async def stop_recording(job_id: str) -> dict[str, Any]:
+    """Stop recording and close the browser session. Returns video path and action log."""
     if job_id not in _sessions:
-        return {"status": "error", "video_path": None}
+        return {"status": "error", "video_path": None, "action_log": []}
 
     session = _sessions.pop(job_id)
     page: Page = session["page"]
     video = page.video
+    action_log = session.get("action_log", [])
+    output_dir = session["output_dir"]
     await session["context"].close()
     await session["browser"].close()
     await session["playwright"].stop()
@@ -297,9 +339,14 @@ async def stop_recording(job_id: str) -> dict[str, str | None]:
 
     # Fallback: find video file in output dir
     if not video_path:
-        output_dir = session["output_dir"]
-        video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
+        video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
         if video_files:
             video_path = f"{output_dir}/{video_files[0]}"
 
-    return {"status": "stopped", "video_path": video_path}
+    # Save action log as JSON for standalone use
+    if action_log:
+        log_path = f"{output_dir}/action_log.json"
+        with open(log_path, "w") as f:
+            json.dump(action_log, f, indent=2)
+
+    return {"status": "stopped", "video_path": video_path, "action_log": action_log}

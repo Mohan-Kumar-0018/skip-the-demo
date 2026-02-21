@@ -353,7 +353,7 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
             for f in sorted(os.listdir(output_dir))
             if f.endswith(".png")
         ]
-        video_files = [f for f in os.listdir(output_dir) if f.endswith(".webm")]
+        video_files = [f for f in os.listdir(output_dir) if f.endswith((".webm", ".mov"))]
         if video_files:
             video_path = f"{output_dir}/{video_files[0]}"
 
