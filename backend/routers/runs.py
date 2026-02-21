@@ -158,6 +158,8 @@ def run_detail(job_id: str, request: Request):
     # Overall score: design_score from results (0 if no results yet)
     overall_score = results["design_score"] if results else 0
 
+    totals = token_usage["totals"]
+
     return {
         "job_id": run["id"],
         "ticket_id": run.get("ticket_id"),
@@ -167,6 +169,9 @@ def run_detail(job_id: str, request: Request):
         "created_at": created_at.isoformat() if created_at else None,
         "completed_at": completed_at.isoformat() if completed_at else None,
         "duration_secs": duration_secs,
+        "total_cost_usd": totals.get("total_cost_usd", 0),
+        "total_input_tokens": totals.get("total_input_tokens", 0),
+        "total_output_tokens": totals.get("total_output_tokens", 0),
         "run_steps": run_steps,
         "results": results,
         "token_usage": token_usage,
