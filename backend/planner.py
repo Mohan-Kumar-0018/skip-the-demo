@@ -47,6 +47,11 @@ Output ONLY a JSON array. Each element must have:
 - params (object, any extra parameters for the step)
 - depends_on (array of step_name strings this step waits for)
 
+8. If the Jira ticket has neither design links (Figma) nor a PRD attachment, the jira_fetch step \
+will fail and the pipeline will abort.
+9. If the system cannot determine which staging panel to browse from ticket context, Figma data, \
+and knowledge base, the jira_fetch step will fail and the pipeline will abort.
+
 Do not include markdown fences or extra text — output raw JSON only."""
 
 
@@ -128,6 +133,8 @@ status "done" or "skipped".
 3. If any ready steps exist, return action "dispatch" with those step names.
 4. If some steps are still "running" but none are ready, return action "wait".
 5. If ALL steps are "done", "skipped", or "failed" (none pending or running), return action "complete".
+6. If jira_fetch has "failed" status (e.g. missing design links + PRD, or unresolved staging panel), \
+no further steps should be dispatched — return action "complete" immediately.
 
 Output ONLY a JSON object with:
 - action: "dispatch" | "wait" | "complete"

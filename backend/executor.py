@@ -217,6 +217,13 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
         design_links.extend(re.findall(figma_pattern, comment.get("body", "")))
     design_links = list(set(design_links))
 
+    # Abort if ticket has neither design links nor PRD
+    if not design_links and not prd_text:
+        raise StepValidationError(
+            "Jira ticket has no design links (Figma) and no PRD attachments. "
+            "Both are required to proceed."
+        )
+
     # Compute subtask summary
     subtasks = jira_data.get("subtasks", [])
     done_statuses = {"done", "closed", "resolved"}
@@ -247,8 +254,26 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     panel_texts = [desc_str, ticket.get("title", "")]
     panel_texts.extend(c.get("body", "") for c in jira_data.get("comments", []))
     detected_panel = _resolve_panel(run_id, panel_texts)
-    if detected_panel:
-        logger.info("[%s] jira_fetch: detected panel '%s'", run_id, detected_panel)
+
+    # Fallback: try matching staging URL from the ticket against KB
+    if not detected_panel:
+        staging_url = ticket.get("staging_url", "")
+        if staging_url:
+            all_urls = get_knowledge("staging_urls")
+            if isinstance(all_urls, dict) and "error" not in all_urls:
+                for key, entry in all_urls.items():
+                    if isinstance(entry, dict) and entry.get("url") == staging_url:
+                        detected_panel = key
+                        break
+
+    if not detected_panel:
+        raise StepValidationError(
+            "Could not determine which staging panel to browse from ticket context, "
+            "Figma designs, or knowledge base. Ensure the ticket has a staging URL "
+            "or recognizable panel reference."
+        )
+
+    logger.info("[%s] jira_fetch: detected panel '%s'", run_id, detected_panel)
 
     feature_name = ticket.get("title", ticket_id)
     save_step_output(run_id, "jira_fetch", {
