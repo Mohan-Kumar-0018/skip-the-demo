@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from typing import Any
 
@@ -9,13 +10,19 @@ from typing import Any
 def adf_to_text(adf: dict | str) -> str:
     """Recursively walk an ADF document and return plain text.
 
-    Accepts either a parsed dict or a JSON string.  Falls back to
-    ``str(adf)`` when the input isn't valid ADF.
+    Accepts either a parsed dict, a JSON string, or a Python repr string
+    (single-quoted dicts from ``str(dict)``).  Falls back to returning
+    the input unchanged when it isn't valid ADF.
     """
     if isinstance(adf, str):
-        try:
-            adf = json.loads(adf)
-        except (json.JSONDecodeError, TypeError):
+        # Try JSON first (double quotes), then Python literal (single quotes)
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                adf = parser(adf)
+                break
+            except (json.JSONDecodeError, TypeError, ValueError, SyntaxError):
+                continue
+        else:
             return adf  # already plain text or unparseable
 
     if not isinstance(adf, dict) or "type" not in adf:
