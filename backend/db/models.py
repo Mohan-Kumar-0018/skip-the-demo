@@ -328,28 +328,6 @@ def get_token_usage_summary(run_id: str) -> dict[str, Any]:
             return cur.fetchone()
 
 
-# ── DASHBOARD ─────────────────────────
-
-
-def get_dashboard_stats() -> dict[str, Any]:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                  COUNT(*) AS total_runs,
-                  COUNT(*) FILTER (WHERE rr.video_path IS NOT NULL) AS total_videos,
-                  COUNT(*) FILTER (WHERE rr.release_notes IS NOT NULL) AS total_pdfs,
-                  COUNT(*) FILTER (WHERE rj.id IS NOT NULL) AS total_jiras,
-                  COALESCE(ROUND(AVG(rr.design_score) FILTER (WHERE rr.design_score IS NOT NULL)), 0) AS avg_score
-                FROM runs r
-                LEFT JOIN run_results rr ON r.id = rr.run_id
-                LEFT JOIN run_jira_data rj ON r.id = rj.run_id
-                """
-            )
-            return cur.fetchone()
-
-
 def get_dashboard_overview() -> list[dict[str, Any]]:
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -461,7 +439,7 @@ def get_dashboard_step_reliability() -> list[dict[str, Any]]:
                         100.0 * COUNT(*) FILTER (WHERE status = 'failed')
                         / NULLIF(COUNT(*), 0), 1
                     )                                                 AS failure_rate_pct
-                FROM run_plan
+                FROM run_steps
                 GROUP BY step_name
                 ORDER BY failure_rate_pct DESC
                 """
@@ -482,7 +460,7 @@ def get_dashboard_step_durations() -> list[dict[str, Any]]:
                     EXTRACT(EPOCH FROM (rp.completed_at - rp.started_at))::int
                         AS duration_secs,
                     rp.error
-                FROM run_plan rp
+                FROM run_steps rp
                 ORDER BY rp.run_id, rp.step_order
                 """
             )
@@ -503,7 +481,7 @@ def get_dashboard_failures() -> list[dict[str, Any]]:
                     rp.error,
                     rp.agent
                 FROM runs r
-                JOIN run_plan rp
+                JOIN run_steps rp
                     ON r.id = rp.run_id AND rp.status = 'failed'
                 ORDER BY r.created_at DESC
                 """
@@ -526,116 +504,12 @@ def get_dashboard_funnel() -> list[dict[str, Any]]:
                     MAX(CASE WHEN rp.status = 'failed'
                              THEN rp.step_name END)              AS failed_at_step
                 FROM runs r
-                JOIN run_plan rp ON r.id = rp.run_id
+                JOIN run_steps rp ON r.id = rp.run_id
                 GROUP BY r.id, r.ticket_id, r.feature_name, r.status
                 ORDER BY r.created_at DESC
                 """
             )
             return [dict(r) for r in cur.fetchall()]
-
-
-# ── GENERIC LIST / GET HELPERS ──────────
-
-
-def _list_table(
-    table: str,
-    limit: int = 50,
-    offset: int = 0,
-    order_by: str = "created_at DESC",
-) -> dict[str, Any]:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
-            total = cur.fetchone()["cnt"]
-
-            cur.execute(
-                f"SELECT * FROM {table} ORDER BY {order_by} LIMIT %s OFFSET %s",
-                (limit, offset),
-            )
-            items = [dict(r) for r in cur.fetchall()]
-
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
-
-
-def _get_by_id(
-    table: str,
-    id_value: Any,
-    id_column: str = "id",
-) -> dict[str, Any] | None:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT * FROM {table} WHERE {id_column} = %s",
-                (id_value,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
-
-
-# ── EXPLORER: RUNS ──────────────────────
-
-
-def list_runs(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("runs", limit, offset)
-
-
-def get_run_by_id(run_id: str) -> dict[str, Any] | None:
-    return _get_by_id("runs", run_id)
-
-
-# ── EXPLORER: RUN RESULTS ──────────────
-
-
-def list_run_results(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_results", limit, offset)
-
-
-def get_run_result_by_id(result_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_results", result_id)
-
-
-# ── EXPLORER: RUN JIRA DATA ────────────
-
-
-def list_run_jira_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_jira_data", limit, offset)
-
-
-def get_run_jira_data_by_id(jira_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_jira_data", jira_id)
-
-
-# ── EXPLORER: RUN FIGMA DATA ───────────
-
-
-def list_run_figma_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_figma_data", limit, offset)
-
-
-def get_run_figma_data_by_id(figma_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_figma_data", figma_id)
-
-
-# ── EXPLORER: RUN BROWSER DATA ─────────
-
-
-def list_run_browser_data(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_browser_data", limit, offset)
-
-
-def get_run_browser_data_by_id(browser_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_browser_data", browser_id)
-
-
-# ── EXPLORER: RUN TOKEN USAGE ──────────
-
-
-def list_run_token_usage(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_token_usage", limit, offset)
-
-
-def get_run_token_usage_by_id(usage_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_token_usage", usage_id)
 
 
 # ── STEP OUTPUTS ─────────────────────────
@@ -732,7 +606,7 @@ def get_plan_intent(run_id: str) -> list[dict[str, Any]]:
 
 
 def get_plan(run_id: str) -> list[dict[str, Any]]:
-    """Merge intent (runs.plan) + reality (run_plan rows).
+    """Merge intent (runs.plan) + reality (run_steps rows).
 
     Returns the same shape as before so all callers work unchanged:
     each step dict has step_order, step_name, agent, params, depends_on,
@@ -746,7 +620,7 @@ def get_plan(run_id: str) -> list[dict[str, Any]]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM run_plan WHERE run_id = %s",
+                "SELECT * FROM run_steps WHERE run_id = %s",
                 (run_id,),
             )
             reality = {r["step_name"]: dict(r) for r in cur.fetchall()}
@@ -784,7 +658,7 @@ def update_plan_step(
     result_summary: str | None = None,
     error: str | None = None,
 ) -> None:
-    """UPSERT into run_plan: INSERT on first touch (from intent data), UPDATE thereafter.
+    """UPSERT into run_steps: INSERT on first touch (from intent data), UPDATE thereafter.
 
     "running" and "skipped" can both be first-touch statuses.
     """
@@ -796,7 +670,7 @@ def update_plan_step(
             if status == "running":
                 cur.execute(
                     """
-                    INSERT INTO run_plan
+                    INSERT INTO run_steps
                       (run_id, step_order, step_name, agent, params, depends_on,
                        status, started_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
@@ -818,7 +692,7 @@ def update_plan_step(
                 # done, failed, skipped — may be first touch (e.g. skipped)
                 cur.execute(
                     """
-                    INSERT INTO run_plan
+                    INSERT INTO run_steps
                       (run_id, step_order, step_name, agent, params, depends_on,
                        status, result_summary, error, completed_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
@@ -840,14 +714,3 @@ def update_plan_step(
                         error,
                     ),
                 )
-
-
-# ── EXPLORER: RUN PLAN ───────────────────
-
-
-def list_run_plan(limit: int = 50, offset: int = 0) -> dict[str, Any]:
-    return _list_table("run_plan", limit, offset)
-
-
-def get_run_plan_by_id(plan_id: int) -> dict[str, Any] | None:
-    return _get_by_id("run_plan", plan_id)

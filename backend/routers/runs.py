@@ -150,7 +150,7 @@ def run_detail(job_id: str):
         "created_at": created_at.isoformat() if created_at else None,
         "completed_at": completed_at.isoformat() if completed_at else None,
         "duration_secs": duration_secs,
-        "plan": plan,
+        "run_steps": plan,
         "results": results,
         "token_usage": token_usage,
     }

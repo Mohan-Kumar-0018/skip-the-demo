@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS run_token_usage (
     created_at      TIMESTAMP       DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS run_plan (
+CREATE TABLE IF NOT EXISTS run_steps (
     id              SERIAL          PRIMARY KEY,
     run_id          VARCHAR(8)      REFERENCES runs(id),
     step_order      INTEGER         NOT NULL,
