@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 
@@ -19,13 +18,13 @@ logging.basicConfig(
     ],
 )
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from celery_app import run_pipeline_task
 from db.models import create_run, get_dashboard_overview
-from orchestrator import run_pipeline
 from routers.runs import router as runs_router
 
 app = FastAPI(title="SkipTheDemo API")
@@ -63,8 +62,14 @@ def dashboard():
 
 
 @app.post("/run", response_model=RunResponse)
-async def trigger_run(body: RunRequest):
+def trigger_run(body: RunRequest):
     job_id = uuid.uuid4().hex[:8]
     create_run(job_id, body.ticket_id)
-    asyncio.create_task(run_pipeline(job_id, body.ticket_id))
+    try:
+        run_pipeline_task.delay(job_id, body.ticket_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not enqueue task (is Redis running?): {exc}",
+        )
     return RunResponse(job_id=job_id)

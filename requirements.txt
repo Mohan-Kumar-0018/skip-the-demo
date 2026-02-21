@@ -41,3 +41,5 @@ moviepy==1.0.3
 edge-tts==7.2.7
 imageio-ffmpeg==0.5.1
 numpy==1.26.4
+celery[redis]==5.4.0
+flower==2.0.1
