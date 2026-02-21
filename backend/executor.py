@@ -129,7 +129,7 @@ def _save_usage(run_id: str, agent_name: str, result: dict[str, Any]) -> None:
 async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
     task = (
         f"Fetch all details for Jira ticket {ticket_id} including subtasks, "
-        f"comments, and all attachments. Save attachments to outputs/{run_id}/."
+        f"comments, and all attachments. Save attachments to outputs/{run_id}/prd/."
     )
     result = await run_jira_agent(task)
     _save_usage(run_id, "jira", result)
@@ -155,21 +155,37 @@ async def _execute_jira(run_id: str, ticket_id: str, params: dict) -> str:
         design_links.extend(re.findall(figma_pattern, comment.get("body", "")))
     design_links = list(set(design_links))
 
+    # Compute subtask summary
+    subtasks = jira_data.get("subtasks", [])
+    done_statuses = {"done", "closed", "resolved"}
+    completed = [s for s in subtasks if s.get("status", "").lower() in done_statuses]
+    pending = [s for s in subtasks if s.get("status", "").lower() not in done_statuses]
+    total = len(subtasks)
+    completed_count = len(completed)
+    task_summary = f"{completed_count}/{total} subtasks completed"
+    if pending:
+        pending_names = ", ".join(s.get("summary", s.get("key", "?")) for s in pending)
+        task_summary += f" — pending: {pending_names}"
+
     save_jira_data(run_id, {
         "ticket_title": ticket.get("title", ""),
         "ticket_description": desc_str,
         "staging_url": ticket.get("staging_url", ""),
         "ticket_status": ticket.get("status", ""),
         "assignee": ticket.get("assignee", ""),
-        "subtasks": jira_data.get("subtasks", []),
+        "subtasks": subtasks,
         "attachments": jira_data.get("attachments", []),
         "comments": jira_data.get("comments", []),
-        "prd_text": prd_text,
         "design_links": design_links,
+        "task_summary": task_summary,
+        "pending_subtasks": pending,
     })
 
     feature_name = ticket.get("title", ticket_id)
-    save_step_output(run_id, "jira_fetch", {"feature_name": feature_name})
+    save_step_output(run_id, "jira_fetch", {
+        "feature_name": feature_name,
+        "prd_text": prd_text,
+    })
 
     return result["summary"]
 
@@ -193,10 +209,20 @@ async def _execute_data_cleanup(run_id: str, ticket_id: str, params: dict) -> st
 
 
 async def _execute_prd_parse(run_id: str, ticket_id: str, params: dict) -> str:
-    jira = get_jira_data(run_id)
-    if jira and jira.get("prd_text"):
-        return f"PRD text available ({len(jira['prd_text'])} chars)"
-    return "No PRD text found (will use ticket description)"
+    jira_out = get_step_output(run_id, "jira_fetch")
+    prd_text = jira_out.get("prd_text", "") if jira_out else ""
+
+    if not prd_text:
+        jira = get_jira_data(run_id)
+        prd_text = jira.get("ticket_description", "") if jira else ""
+        if prd_text:
+            save_step_output(run_id, "prd_parse", {"prd_text": prd_text})
+            return f"No PRD found, using ticket description ({len(prd_text)} chars)"
+        save_step_output(run_id, "prd_parse", {"prd_text": ""})
+        return "No PRD text or ticket description found"
+
+    save_step_output(run_id, "prd_parse", {"prd_text": prd_text})
+    return f"PRD text available ({len(prd_text)} chars)"
 
 
 async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
@@ -216,7 +242,7 @@ async def _execute_figma(run_id: str, ticket_id: str, params: dict) -> str:
     figma_url = design_links[0]
     task = (
         f"Extract the design from this Figma link: {figma_url}. "
-        f"Save exported images to outputs/{run_id}/."
+        f"Save exported images to outputs/{run_id}/figma/."
     )
     result = await run_figma_agent(task)
     _save_usage(run_id, "figma", result)
@@ -257,11 +283,8 @@ async def _execute_nav_plan(run_id: str, ticket_id: str, params: dict) -> str:
         save_step_output(run_id, "nav_plan", {"nav_screens": []})
         return "Skipped — no Figma design images available"
 
-    # Get context from Jira data
-    jira = get_jira_data(run_id)
-    prd_text = ""
-    if jira:
-        prd_text = jira.get("prd_text", "") or jira.get("ticket_description", "")
+    prd_out = get_step_output(run_id, "prd_parse")
+    prd_text = prd_out.get("prd_text", "") if prd_out else ""
 
     result = plan_navigation(figma_images, prd_text)
     _save_usage(run_id, "nav_planner", result)
@@ -316,7 +339,7 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     task = (
         f"Explore the web application at {staging_url} thoroughly.\n"
         f"Job ID: {run_id}\n"
-        f"Output directory: outputs/{run_id}/\n"
+        f"Output directory: outputs/{run_id}/browser/\n"
         f"{creds_text}\n\n"
         "Instructions:\n"
         "1. Navigate to the URL\n"
@@ -346,7 +369,7 @@ async def _execute_browser(run_id: str, ticket_id: str, params: dict) -> str:
     # Collect screenshots and video for step outputs
     screenshots: list[str] = []
     video_path = ""
-    output_dir = f"outputs/{run_id}"
+    output_dir = f"outputs/{run_id}/browser"
     if os.path.isdir(output_dir):
         screenshots = [
             f"{output_dir}/{f}"
@@ -430,10 +453,8 @@ async def _execute_synthesis(run_id: str, ticket_id: str, params: dict) -> str:
     jira_out = get_step_output(run_id, "jira_fetch")
     feature_name = jira_out.get("feature_name", ticket_id) if jira_out else ticket_id
 
-    jira = get_jira_data(run_id)
-    prd_text = ""
-    if jira:
-        prd_text = jira.get("prd_text", "") or jira.get("ticket_description", "")
+    prd_out = get_step_output(run_id, "prd_parse")
+    prd_text = prd_out.get("prd_text", "") if prd_out else ""
 
     vision_out = get_step_output(run_id, "design_compare")
     design_result = {

@@ -189,9 +189,8 @@ async def run_discover_crawl_pipeline(
 async def run_pipeline(run_id: str, ticket_id: str) -> None:
     """Main entry point — plans then executes via event-driven scheduler."""
     try:
-        # Init all steps as pending
-        for s in STEPS:
-            upsert_step(run_id, s, "pending")
+        # Only init the first step — scheduler creates the rest on dispatch
+        upsert_step(run_id, "jira_fetch", "pending")
 
         # Phase 1 + 2: Plan and execute via scheduler
         update_run(run_id, "Planning pipeline...", 2)

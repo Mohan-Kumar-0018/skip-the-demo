@@ -178,8 +178,9 @@ def save_jira_data(run_id: str, data: dict[str, Any]) -> None:
                 INSERT INTO run_jira_data
                   (run_id, ticket_title, ticket_description, staging_url,
                    ticket_status, assignee, subtasks, attachments,
-                   comments, prd_text, design_links)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   comments, design_links,
+                   task_summary, pending_subtasks)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (run_id) DO UPDATE SET
                     ticket_title       = EXCLUDED.ticket_title,
                     ticket_description = EXCLUDED.ticket_description,
@@ -189,8 +190,9 @@ def save_jira_data(run_id: str, data: dict[str, Any]) -> None:
                     subtasks           = EXCLUDED.subtasks,
                     attachments        = EXCLUDED.attachments,
                     comments           = EXCLUDED.comments,
-                    prd_text           = EXCLUDED.prd_text,
-                    design_links       = EXCLUDED.design_links
+                    design_links       = EXCLUDED.design_links,
+                    task_summary       = EXCLUDED.task_summary,
+                    pending_subtasks   = EXCLUDED.pending_subtasks
                 """,
                 (
                     run_id,
@@ -202,8 +204,9 @@ def save_jira_data(run_id: str, data: dict[str, Any]) -> None:
                     json.dumps(data.get("subtasks", [])),
                     json.dumps(data.get("attachments", [])),
                     json.dumps(data.get("comments", [])),
-                    data.get("prd_text", ""),
                     json.dumps(data.get("design_links", [])),
+                    data.get("task_summary", ""),
+                    json.dumps(data.get("pending_subtasks", [])),
                 ),
             )
 

@@ -81,10 +81,11 @@ test-synthesis:
 run:
 	curl -s -X POST http://localhost:8000/run -H 'Content-Type: application/json' -d '{"ticket_id":"$(TICKET)"}' | python -m json.tool
 
-## Reset DB — drop all tables and recreate from schema
+## Reset DB — drop all tables and recreate from schema, clear outputs
 db-reset:
 	psql $(DB_URL) -c "DROP TABLE IF EXISTS run_step_outputs, run_plan, run_token_usage, run_browser_data, run_figma_data, run_jira_data, run_results, run_steps, runs CASCADE;"
 	psql $(DB_URL) -f backend/db/schema.sql
+	rm -rf backend/outputs/*/
 
 ## Install Python deps + Playwright browser
 install:

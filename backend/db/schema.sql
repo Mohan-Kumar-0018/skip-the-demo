@@ -43,8 +43,9 @@ CREATE TABLE IF NOT EXISTS run_jira_data (
     subtasks            JSONB,
     attachments         JSONB,
     comments            JSONB,
-    prd_text            TEXT,
     design_links        JSONB,
+    task_summary        TEXT,
+    pending_subtasks    JSONB,
     created_at          TIMESTAMP       DEFAULT NOW()
 );
 
