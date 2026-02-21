@@ -55,7 +55,12 @@ def _is_logged_in(page_content: dict | str) -> bool:
 async def _login_and_capture_home(
     job_id: str, url: str, creds: dict, output_dir: str | None = None
 ) -> dict[str, Any]:
-    """Phase 1: Deterministic login — no Claude calls. Calls browser tools directly."""
+    """Phase 1: Deterministic login — no Claude calls. Calls browser tools directly.
+
+    Uses login_selectors from the knowledge base when available for precise
+    element targeting (especially important for Flutter web apps).
+    Falls back to generic text-based selectors otherwise.
+    """
     logger.info("Navigating to %s", url)
     await navigate_to_url(url, job_id)
 
@@ -74,70 +79,20 @@ async def _login_and_capture_home(
     else:
         phone = creds.get("phone")
         email = creds.get("email")
-        password = creds.get("password", "")
+        # OTP/password — check both fields (KB may store as "otp" or "password")
+        otp_or_password = creds.get("otp") or creds.get("password", "")
+        # KB may provide app-specific selectors for login elements
+        selectors = creds.get("login_selectors", {})
+        app_type = creds.get("app_type", "html")
 
         if phone:
-            # Phone + OTP/password login flow
-            phone_str = str(phone)
-            local_phone = phone_str[3:] if phone_str.startswith("966") else phone_str
-
-            logger.info("Entering phone number: %s", local_phone)
-            # Click the phone label to focus the field, then type
-            await click_by_text("Phone Number", job_id)
-            await wait_seconds(1, job_id)
-            await type_text("input", local_phone, job_id)
-
-            # Submit phone
-            await click_by_text("Get OTP", job_id)
-            await wait_seconds(3, job_id)
-
-            # Enter OTP/password on second screen
-            logger.info("Entering OTP/password")
-            # Find the OTP input — scan elements for the right selector
-            otp_typed = False
-            elements = await list_interactive_elements(job_id)
-            if isinstance(elements, list):
-                for el in elements:
-                    selector = el.get("selector", "") if isinstance(el, dict) else str(el)
-                    sel_lower = selector.lower()
-                    if "one-time-code" in sel_lower or "otp" in sel_lower or "verification" in sel_lower:
-                        result = await type_text(selector, password, job_id)
-                        if isinstance(result, dict) and result.get("status") != "error":
-                            otp_typed = True
-                            break
-            if not otp_typed:
-                # Fallback: type digits via keyboard (focus should be on OTP field)
-                for digit in password:
-                    await press_key(digit, job_id)
-
-            # Submit OTP
-            try:
-                await click_by_text("Verify", job_id)
-            except Exception:
-                await click_by_text("Submit", job_id)
-
+            login_verified = await _login_phone_otp(
+                job_id, phone, otp_or_password, selectors, app_type,
+            )
         elif email:
-            # Email + password login flow
-            logger.info("Entering email and password")
-            await type_text("input[type='email']", str(email), job_id)
-            await type_text("input[type='password']", password, job_id)
-            try:
-                await click_by_text("Log in", job_id)
-            except Exception:
-                try:
-                    await click_by_text("Sign in", job_id)
-                except Exception:
-                    await click_by_text("Submit", job_id)
-
-        # Wait for dashboard to load
-        logger.info("Waiting for dashboard to load")
-        await wait_seconds(5, job_id)
-
-        # Verify login succeeded
-        page_content = await get_page_content(job_id)
-        login_verified = _is_logged_in(page_content)
-        if not login_verified:
-            logger.warning("Login may have failed — still on login page")
+            login_verified = await _login_email_password(
+                job_id, email, otp_or_password, selectors,
+            )
 
     # Take home page screenshot (session stays alive for Phase 3)
     home_screenshot = None
@@ -146,11 +101,167 @@ async def _login_and_capture_home(
         home_screenshot = screenshot_result.get("path")
 
     return {
-        "summary": f"Logged in to {url} successfully",
+        "summary": f"Logged in to {url} — verified={login_verified}",
         "home_screenshot": home_screenshot,
         "login_verified": login_verified,
         "usage": {},
     }
+
+
+async def _login_phone_otp(
+    job_id: str,
+    phone: str,
+    otp_or_password: str,
+    selectors: dict,
+    app_type: str,
+    max_attempts: int = 2,
+) -> bool:
+    """Phone + OTP/password login flow with retry support.
+
+    Uses KB login_selectors when provided, falls back to generic selectors.
+    """
+    phone_str = str(phone)
+    # Strip country code if the UI already shows it (e.g. +966)
+    local_phone = phone_str[3:] if phone_str.startswith("966") else phone_str
+
+    phone_selector = selectors.get("phone_input")
+    get_otp_text = selectors.get("get_otp_button", "Get OTP")
+    otp_selector = selectors.get("otp_input")
+    verify_text = selectors.get("verify_button", "Verify")
+
+    for attempt in range(1, max_attempts + 1):
+        logger.info("Login attempt %d/%d — phone=%s, app_type=%s",
+                     attempt, max_attempts, local_phone, app_type)
+
+        # ── Step 1: Enter phone number ──────────────────────────
+        if phone_selector:
+            # Use the specific KB selector (e.g. Flutter semantic node)
+            logger.info("Clicking phone input via KB selector: %s", phone_selector)
+            result = await type_text(phone_selector, local_phone, job_id)
+            if isinstance(result, dict) and result.get("status") == "error":
+                logger.warning("KB phone selector failed: %s — trying text fallback", result.get("message"))
+                await click_by_text("Phone Number", job_id)
+                await wait_seconds(1, job_id)
+                await type_text("input", local_phone, job_id)
+        else:
+            # Generic fallback: click label then type into first input
+            await click_by_text("Phone Number", job_id)
+            await wait_seconds(1, job_id)
+            await type_text("input", local_phone, job_id)
+
+        await wait_seconds(1, job_id)
+
+        # ── Step 2: Submit phone (click "Get OTP") ─────────────
+        logger.info("Submitting phone — clicking '%s'", get_otp_text)
+        await click_by_text(get_otp_text, job_id)
+        await wait_seconds(4, job_id)  # Wait for OTP screen to load
+
+        # ── Step 3: Enter OTP/password ──────────────────────────
+        if not otp_or_password:
+            logger.error("No OTP/password provided in credentials — cannot complete login")
+            return False
+
+        logger.info("Entering OTP (%d digits)", len(otp_or_password))
+        otp_typed = False
+
+        # Method A: Use KB-specific OTP selector
+        if otp_selector:
+            logger.info("Typing OTP via KB selector: %s", otp_selector)
+            result = await type_text(otp_selector, otp_or_password, job_id)
+            if isinstance(result, dict) and result.get("status") != "error":
+                otp_typed = True
+            else:
+                logger.warning("KB OTP selector failed: %s", result.get("message") if isinstance(result, dict) else result)
+
+        # Method B: Scan interactive elements for OTP-like inputs
+        if not otp_typed:
+            elements = await list_interactive_elements(job_id)
+            if isinstance(elements, list):
+                for el in elements:
+                    sel = el.get("selector", "") if isinstance(el, dict) else str(el)
+                    text = el.get("text", "") if isinstance(el, dict) else ""
+                    combined = (sel + " " + text).lower()
+                    if any(kw in combined for kw in ("one-time-code", "otp", "verification", "verify")):
+                        logger.info("Found OTP element via scan: %s", sel)
+                        result = await type_text(sel, otp_or_password, job_id)
+                        if isinstance(result, dict) and result.get("status") != "error":
+                            otp_typed = True
+                            break
+
+        # Method C: Type digits via keyboard (OTP field should have focus)
+        if not otp_typed:
+            logger.info("Typing OTP digits via keyboard as fallback")
+            for digit in otp_or_password:
+                await press_key(digit, job_id)
+            otp_typed = True
+
+        await wait_seconds(1, job_id)
+
+        # ── Step 4: Submit OTP (click "Verify") ────────────────
+        logger.info("Submitting OTP — clicking '%s'", verify_text)
+        try:
+            await click_by_text(verify_text, job_id)
+        except Exception:
+            logger.info("'%s' not found, trying 'Submit'", verify_text)
+            try:
+                await click_by_text("Submit", job_id)
+            except Exception:
+                logger.warning("Could not find verify/submit button")
+
+        # ── Step 5: Wait and verify login succeeded ─────────────
+        logger.info("Waiting for dashboard to load")
+        await wait_seconds(5, job_id)
+
+        page_content = await get_page_content(job_id)
+        if _is_logged_in(page_content):
+            logger.info("Login verified successfully on attempt %d", attempt)
+            return True
+
+        logger.warning("Login attempt %d failed — still on login page", attempt)
+
+        # On retry: check if login_success_indicator tells us what to look for
+        success_indicator = selectors.get("login_success_indicator")
+        if success_indicator:
+            text = page_content.get("text", "") if isinstance(page_content, dict) else str(page_content)
+            if success_indicator.lower() in text.lower():
+                logger.info("Login success indicator '%s' found", success_indicator)
+                return True
+
+    logger.error("Login failed after %d attempts", max_attempts)
+    return False
+
+
+async def _login_email_password(
+    job_id: str,
+    email: str,
+    password: str,
+    selectors: dict,
+) -> bool:
+    """Email + password login flow."""
+    logger.info("Entering email and password")
+    email_selector = selectors.get("email_input", "input[type='email']")
+    password_selector = selectors.get("password_input", "input[type='password']")
+
+    await type_text(email_selector, str(email), job_id)
+    await type_text(password_selector, password, job_id)
+
+    submit_text = selectors.get("submit_button", "Log in")
+    try:
+        await click_by_text(submit_text, job_id)
+    except Exception:
+        try:
+            await click_by_text("Sign in", job_id)
+        except Exception:
+            await click_by_text("Submit", job_id)
+
+    logger.info("Waiting for dashboard to load")
+    await wait_seconds(5, job_id)
+
+    page_content = await get_page_content(job_id)
+    verified = _is_logged_in(page_content)
+    if not verified:
+        logger.warning("Email login may have failed — still on login page")
+    return verified
 
 
 # ── Phase 2: Navigation Discovery ────────────────────────────
@@ -661,7 +772,10 @@ async def run_discover_crawl(
     login_result = await _login_and_capture_home(job_id, url, creds, output_dir)
 
     if not login_result.get("login_verified", True):
-        logger.warning("Phase 1 login not verified — home screenshot may be a login page")
+        raise RuntimeError(
+            f"Login failed for {kb_key} ({url}) — still on login page after all attempts. "
+            "Check credentials in knowledge_base.json and login_selectors."
+        )
 
     # Phase 2: Discover navigation
     logger.info("Phase 2: Discover navigation from home screenshot")
