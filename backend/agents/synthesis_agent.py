@@ -47,8 +47,14 @@ def generate_pm_summary(
                         "   Mention what was built, the design score, and highlight any significant deviations.\n"
                         "   Do NOT use engineering jargon.\n\n"
                         "2. RELEASE NOTES — Professional, user-facing release notes in markdown.\n"
-                        "   Use ## heading with the feature name, then bullet points.\n"
-                        "   Write for an end user, not an engineer. Keep it punchy and positive.\n\n"
+                        "   Format rules:\n"
+                        "   - Start with a ## heading using the feature name.\n"
+                        "   - 4-6 bullet points, each following this pattern:\n"
+                        "     **Bold action phrase** — Plain-language description of what the user can do or see.\n"
+                        "   - The bold phrase should be a short verb-led hook (e.g. 'Find suppliers instantly', 'Search and filter with ease').\n"
+                        "   - The description after the em dash (—) should explain the benefit or context in one sentence.\n"
+                        "   - Write for an end user, not an engineer. Keep it punchy, positive, and jargon-free.\n"
+                        "   - Do NOT use sub-bullets, numbered lists, or nested formatting.\n\n"
                         "Return ONLY valid JSON — no markdown fences:\n"
                         '{\n  "summary": "...",\n  "release_notes": "..."\n}'
                     ),
